@@ -1,0 +1,197 @@
+export type DiceValue = 1 | 2 | 3 | 4 | 5 | 6;
+
+export type DiceRoll = DiceValue[];
+
+export type HandRank =
+  | 'high_card'
+  | 'pair'
+  | 'two_pair'
+  | 'three'
+  | 'straight'
+  | 'full_house'
+  | 'four'
+  | 'five';
+
+export type BuildTag =
+  | 'high'
+  | 'even'
+  | 'set'
+  | 'sequence'
+  | 'economy'
+  | 'consistency';
+
+export type JokerTrigger = 'onHandStart' | 'beforeScore' | 'afterScore';
+
+export type CardPlayResult =
+  | {
+      ok: true;
+      dice: DiceRoll;
+      message: string;
+    }
+  | {
+      ok: false;
+      message: string;
+    };
+
+export type ActionCardDefinition = {
+  id: string;
+  name: string;
+  description: string;
+  tags: BuildTag[];
+  apply: (params: CardPlayParams) => CardPlayResult;
+};
+
+export type CardPlayParams = {
+  dice: DiceRoll;
+  selectedDice: number[];
+  rollDiceAt: (dice: DiceRoll, indices: number[]) => DiceRoll;
+};
+
+export type JokerEffectContext = {
+  trigger: JokerTrigger;
+  dice: DiceRoll;
+  scoringDice: number[];
+  handRank: HandRank;
+  handBase: number;
+  diceBase: number;
+  bonusBase: number;
+  multiplier: number;
+  finalScore: number;
+  extraRerolls: number;
+  goldDelta: number;
+  notes: string[];
+};
+
+export type JokerDefinition = {
+  id: string;
+  name: string;
+  description: string;
+  tags: BuildTag[];
+  trigger: JokerTrigger;
+  apply: (ctx: JokerEffectContext) => JokerEffectContext;
+};
+
+export type BossScoreContext = {
+  scoringDice: number[];
+  handRank: HandRank;
+  handBase: number;
+  diceBase: number;
+  bonusBase: number;
+  multiplier: number;
+  notes: string[];
+};
+
+export type BossDefinition = {
+  id: string;
+  name: string;
+  description: string;
+  disabledJokerSlots?: number;
+  applyBeforeJokers?: (ctx: BossScoreContext) => BossScoreContext;
+};
+
+export type RewardOption =
+  | {
+      id: string;
+      type: 'joker';
+      jokerId: string;
+      title: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: 'card';
+      cardId: string;
+      title: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: 'gold';
+      amount: number;
+      title: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: 'remove_card';
+      title: string;
+      description: string;
+    };
+
+export type ShopItem =
+  | {
+      id: string;
+      type: 'joker';
+      jokerId: string;
+      title: string;
+      description: string;
+      price: number;
+    }
+  | {
+      id: string;
+      type: 'card';
+      cardId: string;
+      title: string;
+      description: string;
+      price: number;
+    }
+  | {
+      id: string;
+      type: 'remove_card';
+      title: string;
+      description: string;
+      price: number;
+    }
+  | {
+      id: string;
+      type: 'reroll';
+      title: string;
+      description: string;
+      price: number;
+    };
+
+export type StageDefinition = {
+  id: string;
+  name: string;
+  targetScore: number;
+  rewardGold: number;
+  bossId?: string;
+};
+
+export type DeckState = {
+  drawPile: string[];
+  discardPile: string[];
+  hand: string[];
+};
+
+export type HandEvaluation = {
+  rank: HandRank;
+  counts: number[];
+  total: number;
+};
+
+export type ScoreResult = {
+  handRank: HandRank;
+  handBase: number;
+  diceBase: number;
+  bonusBase: number;
+  multiplier: number;
+  finalScore: number;
+  scoringDice: number[];
+  notes: string[];
+  goldDelta: number;
+  activeJokerIds: string[];
+  disabledJokerIds: string[];
+};
+
+export type PurgeSource = 'reward' | 'shop';
+
+export type PurgeOption = {
+  zone: 'drawPile' | 'discardPile';
+  index: number;
+  cardId: string;
+};
+
+export type LastScoringSummary = ScoreResult & {
+  gainedGold: number;
+};
