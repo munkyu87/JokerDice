@@ -178,7 +178,13 @@ const DieFace = ({
   </View>
 );
 
-export function RogueRollScreen() {
+export function RogueRollScreen({
+  startingJokerId = 'lucky_reroll',
+  onBackToLobby,
+}: {
+  startingJokerId?: string;
+  onBackToLobby?: () => void;
+}) {
   const isDarkMode = useColorScheme() === 'dark';
   const { height } = useWindowDimensions();
   const isCompact = height < 860;
@@ -213,7 +219,7 @@ export function RogueRollScreen() {
     removeDeckCard,
     continueFromShop,
     restartRun,
-  } = useRogueRollGame();
+  } = useRogueRollGame(startingJokerId);
   const visibleCardSlotCount = Math.max(3, state.hand.drawCount, state.deck.hand.length);
   const [displayDice, setDisplayDice] = useState(state.hand.dice);
   const diceAnimationsRef = useRef(
@@ -600,9 +606,16 @@ export function RogueRollScreen() {
           <View style={[styles.scorePanel, isCompact ? styles.scorePanelCompact : undefined]}>
             <View style={styles.panelHeader}>
               <Text style={styles.panelLabel}>현재 블라인드</Text>
-              <Pressable onPress={() => setShowGuide(true)} style={styles.iconButton}>
-                <Text style={styles.iconButtonText}>족보</Text>
-              </Pressable>
+              <View style={styles.headerButtonRow}>
+                {onBackToLobby ? (
+                  <Pressable onPress={onBackToLobby} style={styles.iconButton}>
+                    <Text style={styles.iconButtonText}>로비</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable onPress={() => setShowGuide(true)} style={styles.iconButton}>
+                  <Text style={styles.iconButtonText}>족보</Text>
+                </Pressable>
+              </View>
             </View>
             <Text style={[styles.scoreValue, isCompact ? styles.scoreValueCompact : undefined]}>
               {state.stage.currentScore}
@@ -1248,6 +1261,42 @@ const styles = StyleSheet.create({
     padding: 10,
     gap: 8,
   },
+  startJokerSplashOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(234,247,255,0.62)',
+  },
+  startJokerSplashCard: {
+    borderRadius: 22,
+    borderWidth: 2,
+    padding: 16,
+    width: 260,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  startJokerSplashImage: {
+    width: 180,
+    height: 220,
+    borderRadius: 18,
+  },
+  startJokerSplashPlaceholder: {
+    width: 180,
+    height: 220,
+    borderRadius: 18,
+    backgroundColor: 'rgba(216,232,246,0.9)',
+  },
+  startJokerSplashName: {
+    marginTop: 10,
+    fontSize: 18,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
   tooltipDismissOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 4,
@@ -1294,6 +1343,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     // marginBottom: 10,
+  },
+  headerButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   panelLabel: {
     fontSize: 11,

@@ -72,7 +72,7 @@ export const ACTION_CARDS: ActionCardDefinition[] = [
 
       const highest = Math.max(...dice);
       const nextDice = [...dice];
-      nextDice[selectedDice[0]] = highest;
+      nextDice[selectedDice[0]] = highest as (typeof nextDice)[number];
 
       return {
         ok: true,
@@ -93,7 +93,7 @@ export const ACTION_CARDS: ActionCardDefinition[] = [
       targetIndices.forEach(index => {
         const value = nextDice[index];
         if (value % 2 === 1) {
-          nextDice[index] = Math.min(6, value + 1);
+          nextDice[index] = Math.min(6, value + 1) as (typeof nextDice)[number];
         }
       });
 
@@ -148,14 +148,55 @@ export const JOKERS: JokerDefinition[] = [
     },
   },
   {
+    id: 'even_polish',
+    name: 'Even Polish',
+    description: '짝수 주사위 1개당 기본 점수 +4를 얻습니다.',
+    rarity: 'rare',
+    tags: ['even', 'consistency'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      const evenCount = ctx.scoringDice.filter(value => value % 2 === 0).length;
+      if (evenCount === 0) {
+        return ctx;
+      }
+
+      const bonus = evenCount * 4;
+      return {
+        ...ctx,
+        bonusBase: ctx.bonusBase + bonus,
+        notes: [...ctx.notes, `Even Polish: 짝수 ${evenCount}개로 기본 점수 +${bonus}`],
+      };
+    },
+  },
+  {
+    id: 'odd_power',
+    name: 'Odd Power',
+    description: '모든 점수 주사위가 홀수면 배수가 +2 됩니다.',
+    rarity: 'rare',
+    tags: ['consistency'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      const isAllOdd = ctx.scoringDice.every(value => value % 2 === 1);
+      if (!isAllOdd) {
+        return ctx;
+      }
+
+      return {
+        ...ctx,
+        multiplier: ctx.multiplier + 2,
+        notes: [...ctx.notes, 'Odd Power: 홀수 시너지 발동으로 배수 +2'],
+      };
+    },
+  },
+  {
     id: 'triple_boost',
     name: 'Triple Boost',
-    description: '트리플 이상 족보면 배수가 +3 됩니다.',
+    description: '트리플이 포함된 족보면 배수가 +3 됩니다.',
     rarity: 'rare',
     tags: ['set'],
     trigger: 'beforeScore',
     apply: ctx => {
-      if (!['three', 'full_house', 'four', 'five'].includes(ctx.handRank)) {
+      if (!['three', 'full_house'].includes(ctx.handRank)) {
         return ctx;
       }
 

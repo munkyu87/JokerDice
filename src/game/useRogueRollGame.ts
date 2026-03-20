@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 
-import { BOSSES, STAGES, STARTING_JOKERS } from './data';
+import { BOSSES, STAGES } from './data';
 import {
   createRewardOptions,
   createShopItems,
@@ -127,12 +127,16 @@ const beginHand = ({
   };
 };
 
-const createInitialGameState = (rng: () => number = Math.random): GameState => {
+const createInitialGameState = (
+  startingJokerId: string = 'lucky_reroll',
+  rng: () => number = Math.random,
+): GameState => {
+  const startingJokers = [startingJokerId];
   const bossId = getBossIdForStage(0, rng);
   const startingDeck = createStartingDeck(rng);
   const opening = beginHand({
     deck: startingDeck,
-    jokers: STARTING_JOKERS,
+    jokers: startingJokers,
     bossId,
     rng,
   });
@@ -140,7 +144,7 @@ const createInitialGameState = (rng: () => number = Math.random): GameState => {
   return {
     phase: 'playing',
     deck: opening.deck,
-    jokers: [...STARTING_JOKERS],
+    jokers: [...startingJokers],
     gold: STARTING_GOLD,
     stage: {
       ante: 1,
@@ -157,8 +161,8 @@ const createInitialGameState = (rng: () => number = Math.random): GameState => {
   };
 };
 
-export const useRogueRollGame = () => {
-  const [state, setState] = useState<GameState>(() => createInitialGameState());
+export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
+  const [state, setState] = useState<GameState>(() => createInitialGameState(startingJokerId));
 
   const stageDefinition = getStageDefinitionForProgress(state.stage.ante, state.stage.stageIndex);
   const boss = getBoss(state.stage.bossId);
@@ -621,7 +625,7 @@ export const useRogueRollGame = () => {
   };
 
   const restartRun = () => {
-    setState(createInitialGameState());
+    setState(createInitialGameState(startingJokerId));
   };
 
   return {
