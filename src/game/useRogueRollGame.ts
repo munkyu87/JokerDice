@@ -31,8 +31,10 @@ import {
 
 const MAX_JOKERS = 5;
 const MAX_CARDS_PER_HAND = 2;
+const BASE_HAND_DRAW = 3;
 
 type StageState = {
+  ante: number;
   stageIndex: number;
   currentScore: number;
   remainingHands: number;
@@ -45,6 +47,8 @@ type HandState = {
   selectedDice: number[];
   cardsPlayed: number;
   freeRerolls: number;
+  drawCount: number;
+  handRefreshes: number;
 };
 
 type Phase = 'playing' | 'reward' | 'shop' | 'purge' | 'victory' | 'defeat';
@@ -66,6 +70,23 @@ type GameState = {
 const HANDS_PER_STAGE = 4;
 const ROLLS_PER_STAGE = 3;
 const STARTING_GOLD = 5;
+const TOTAL_ANTES = 8;
+
+const getStageDefinitionForProgress = (ante: number, stageIndex: number) => {
+  const baseStage = STAGES[stageIndex];
+  const anteGrowth =
+    1 +
+    (ante - 1) * 0.48 +
+    Math.max(0, ante - 3) * 0.08 +
+    Math.max(0, ante - 6) * 0.12;
+  const rewardBonus = Math.floor((ante - 1) / 2) + (stageIndex === STAGES.length - 1 ? 1 : 0);
+
+  return {
+    ...baseStage,
+    targetScore: Math.round(baseStage.targetScore * anteGrowth),
+    rewardGold: baseStage.rewardGold + rewardBonus,
+  };
+};
 
 const getBossIdForStage = (stageIndex: number, rng: () => number) => {
   if (stageIndex !== STAGES.length - 1) {
@@ -87,8 +108,9 @@ const beginHand = ({
   rng: () => number;
 }) => {
   const resetDeck = discardHand(deck);
-  const preparedDeck = drawCards(resetDeck, 3, rng);
   const handStartBonus = getHandStartBonus(jokers, bossId);
+  const drawCount = BASE_HAND_DRAW + handStartBonus.handSizeBonus;
+  const preparedDeck = drawCards(resetDeck, drawCount, rng);
 
   return {
     deck: preparedDeck,
@@ -97,6 +119,8 @@ const beginHand = ({
       selectedDice: [],
       cardsPlayed: 0,
       freeRerolls: handStartBonus.extraRerolls,
+      drawCount,
+      handRefreshes: handStartBonus.handRefreshes,
     },
     message:
       handStartBonus.notes[0] ?? '새 Hand가 시작되었습니다. 주사위를 선택해서 리롤하거나 카드를 사용하세요.',
@@ -119,6 +143,7 @@ const createInitialGameState = (rng: () => number = Math.random): GameState => {
     jokers: [...STARTING_JOKERS],
     gold: STARTING_GOLD,
     stage: {
+      ante: 1,
       stageIndex: 0,
       currentScore: 0,
       remainingHands: HANDS_PER_STAGE,
@@ -135,7 +160,7 @@ const createInitialGameState = (rng: () => number = Math.random): GameState => {
 export const useRogueRollGame = () => {
   const [state, setState] = useState<GameState>(() => createInitialGameState());
 
-  const stageDefinition = STAGES[state.stage.stageIndex];
+  const stageDefinition = getStageDefinitionForProgress(state.stage.ante, state.stage.stageIndex);
   const boss = getBoss(state.stage.bossId);
 
   const previewScore = useMemo(
@@ -226,6 +251,34 @@ export const useRogueRollGame = () => {
     });
   };
 
+  const refreshHandCards = () => {
+    if (state.phase !== 'playing') {
+      return;
+    }
+
+    setState(currentState => {
+      if (currentState.hand.handRefreshes <= 0) {
+        return {
+          ...currentState,
+          message: '남은 손패 교체가 없습니다.',
+        };
+      }
+
+      const discardedHandDeck = discardHand(currentState.deck);
+      const nextDeck = drawCards(discardedHandDeck, currentState.hand.drawCount, Math.random);
+
+      return {
+        ...currentState,
+        deck: nextDeck,
+        hand: {
+          ...currentState.hand,
+          handRefreshes: currentState.hand.handRefreshes - 1,
+        },
+        message: '손패를 새로 교체했습니다.',
+      };
+    });
+  };
+
   const playCard = (handIndex: number) => {
     if (state.phase !== 'playing') {
       return;
@@ -276,8 +329,11 @@ export const useRogueRollGame = () => {
   };
 
   const moveToNextStage = (currentState: GameState): GameState => {
-    const nextStageIndex = currentState.stage.stageIndex + 1;
+    const isLastStageInAnte = currentState.stage.stageIndex === STAGES.length - 1;
+    const nextStageIndex = isLastStageInAnte ? 0 : currentState.stage.stageIndex + 1;
+    const nextAnte = isLastStageInAnte ? currentState.stage.ante + 1 : currentState.stage.ante;
     const bossId = getBossIdForStage(nextStageIndex, Math.random);
+    const nextStageDefinition = getStageDefinitionForProgress(nextAnte, nextStageIndex);
     const opening = beginHand({
       deck: currentState.deck,
       jokers: currentState.jokers,
@@ -290,6 +346,7 @@ export const useRogueRollGame = () => {
       phase: 'playing',
       deck: opening.deck,
       stage: {
+        ante: nextAnte,
         stageIndex: nextStageIndex,
         currentScore: 0,
         remainingHands: HANDS_PER_STAGE,
@@ -300,7 +357,7 @@ export const useRogueRollGame = () => {
       rewardOptions: [],
       shopItems: [],
       purgeSource: undefined,
-      message: `${STAGES[nextStageIndex].name} 시작. ${opening.message}`,
+      message: `Ante ${nextAnte} ${nextStageDefinition.name} 시작. ${opening.message}`,
       lastScore: currentState.lastScore,
     };
   };
@@ -331,8 +388,13 @@ export const useRogueRollGame = () => {
         },
       };
 
-      if (nextScore >= STAGES[currentState.stage.stageIndex].targetScore) {
-        const stageRewardGold = STAGES[currentState.stage.stageIndex].rewardGold;
+      const currentStageDefinition = getStageDefinitionForProgress(
+        currentState.stage.ante,
+        currentState.stage.stageIndex,
+      );
+
+      if (nextScore >= currentStageDefinition.targetScore) {
+        const stageRewardGold = currentStageDefinition.rewardGold;
         const clearedStageState: GameState = {
           ...updatedState,
           gold: updatedState.gold + stageRewardGold,
@@ -341,13 +403,17 @@ export const useRogueRollGame = () => {
             currentScore: nextScore,
             remainingHands,
           },
-          message: `${STAGES[currentState.stage.stageIndex].name} 클리어. 보상 골드 ${stageRewardGold}를 획득했습니다.`,
+          message: `Ante ${currentState.stage.ante} ${currentStageDefinition.name} 클리어. 보상 골드 ${stageRewardGold}를 획득했습니다.`,
         };
 
-        if (currentState.stage.stageIndex === STAGES.length - 1) {
+        if (
+          currentState.stage.ante === TOTAL_ANTES &&
+          currentState.stage.stageIndex === STAGES.length - 1
+        ) {
           return {
             ...clearedStageState,
             phase: 'victory',
+            message: `Ante ${TOTAL_ANTES} Boss Blind까지 돌파했습니다. 이번 런을 완전히 클리어했습니다.`,
           };
         }
 
@@ -561,6 +627,7 @@ export const useRogueRollGame = () => {
   return {
     state,
     stageDefinition,
+    totalAntes: TOTAL_ANTES,
     boss,
     previewScore,
     purgeOptions,
@@ -569,6 +636,7 @@ export const useRogueRollGame = () => {
     toggleDie,
     selectAllDice,
     rerollSelectedDice,
+    refreshHandCards,
     playCard,
     submitHand,
     applyReward,

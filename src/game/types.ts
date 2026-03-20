@@ -21,6 +21,7 @@ export type BuildTag =
   | 'consistency';
 
 export type JokerTrigger = 'onHandStart' | 'beforeScore' | 'afterScore';
+export type JokerRarity = 'common' | 'uncommon' | 'rare' | 'legendary';
 
 export type CardPlayResult =
   | {
@@ -58,6 +59,8 @@ export type JokerEffectContext = {
   multiplier: number;
   finalScore: number;
   extraRerolls: number;
+  handSizeBonus: number;
+  handRefreshes: number;
   goldDelta: number;
   notes: string[];
 };
@@ -66,6 +69,7 @@ export type JokerDefinition = {
   id: string;
   name: string;
   description: string;
+  rarity: JokerRarity;
   tags: BuildTag[];
   trigger: JokerTrigger;
   apply: (ctx: JokerEffectContext) => JokerEffectContext;

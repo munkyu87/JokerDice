@@ -225,6 +225,8 @@ export const getHandStartBonus = (jokerIds: string[], bossId?: string) => {
     multiplier: 1,
     finalScore: 0,
     extraRerolls: 0,
+    handSizeBonus: 0,
+    handRefreshes: 0,
     goldDelta: 0,
     notes: [],
   };

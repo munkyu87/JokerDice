@@ -1,18 +1,23 @@
-import React from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
+  Easing,
+  ImageBackground,
+  Modal,
+  PanResponder,
   Pressable,
   SafeAreaView,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   useColorScheme,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
 import { getActionCard, getJoker } from '../game/engine';
 import { useRogueRollGame } from '../game/useRogueRollGame';
-import { HandRank } from '../game/types';
+import { DiceValue, HandRank, JokerRarity } from '../game/types';
 
 const HAND_RANK_LABELS: Record<HandRank, string> = {
   high_card: 'High Card',
@@ -24,6 +29,84 @@ const HAND_RANK_LABELS: Record<HandRank, string> = {
   four: 'Four',
   five: 'Five',
 };
+
+const HAND_RANK_GUIDE: Array<{ rank: HandRank; base: number; hint: string }> = [
+  { rank: 'high_card', base: 0, hint: '기본 숫자 합만 반영됩니다.' },
+  { rank: 'pair', base: 10, hint: '안정적인 초반 점수용.' },
+  { rank: 'two_pair', base: 20, hint: '셋업형 조커와 궁합이 좋습니다.' },
+  { rank: 'three', base: 30, hint: '세트 빌드의 시작점.' },
+  { rank: 'straight', base: 40, hint: '연속 숫자 빌드의 핵심.' },
+  { rank: 'full_house', base: 60, hint: '안정성과 고점의 균형.' },
+  { rank: 'four', base: 80, hint: '강한 단일 족보.' },
+  { rank: 'five', base: 100, hint: '최상위 족보.' },
+];
+
+const JOKER_TRIGGER_LABELS = {
+  onHandStart: '시작 효과',
+  beforeScore: '점수 전',
+  afterScore: '점수 후',
+} as const;
+
+const JOKER_RARITY_LABELS: Record<JokerRarity, string> = {
+  common: '일반',
+  uncommon: '희귀',
+  rare: '레어',
+  legendary: '전설',
+};
+
+const JOKER_RARITY_COLORS: Record<JokerRarity, { frame: string; glow: string }> = {
+  common: { frame: '#9aa6b2', glow: 'rgba(154, 166, 178, 0.28)' },
+  uncommon: { frame: '#3b82f6', glow: 'rgba(59, 130, 246, 0.35)' },
+  rare: { frame: '#ef4444', glow: 'rgba(239, 68, 68, 0.35)' },
+  legendary: { frame: '#f59e0b', glow: 'rgba(245, 158, 11, 0.45)' },
+};
+
+const DIE_PIP_MAP: Record<DiceValue, boolean[]> = {
+  1: [false, false, false, false, true, false, false, false, false],
+  2: [true, false, false, false, false, false, false, false, true],
+  3: [true, false, false, false, true, false, false, false, true],
+  4: [true, false, true, false, false, false, true, false, true],
+  5: [true, false, true, false, true, false, true, false, true],
+  6: [true, false, true, true, false, true, true, false, true],
+};
+
+const TAG_LABELS = {
+  high: 'HIGH',
+  even: 'EVEN',
+  set: 'SET',
+  sequence: 'RUN',
+  economy: 'GOLD',
+  consistency: 'SAFE',
+} as const;
+
+const ACTION_CARD_THEME = {
+  high: { frame: '#1f6feb', surface: '#e7f0ff', accent: '#0d63c9', badge: '#cfe0ff' },
+  even: { frame: '#0f766e', surface: '#def7f3', accent: '#0f766e', badge: '#c9f0ea' },
+  set: { frame: '#7c3aed', surface: '#efe7ff', accent: '#7c3aed', badge: '#dfcffd' },
+  sequence: { frame: '#ea580c', surface: '#ffeddc', accent: '#ea580c', badge: '#ffd6bc' },
+  economy: { frame: '#b7791f', surface: '#fff4d8', accent: '#b7791f', badge: '#ffe8ae' },
+  consistency: { frame: '#2563eb', surface: '#e8f1ff', accent: '#2563eb', badge: '#d6e5ff' },
+} as const;
+
+const JOKER_THEME = {
+  high: { frame: '#8b5cf6', surface: '#23143c', accent: '#b692ff', badge: '#3a235d' },
+  even: { frame: '#14b8a6', surface: '#102827', accent: '#6ee7d8', badge: '#183938' },
+  set: { frame: '#d946ef', surface: '#2b1334', accent: '#f0abfc', badge: '#441b4f' },
+  sequence: { frame: '#f97316', surface: '#2d1a12', accent: '#fdba74', badge: '#47291c' },
+  economy: { frame: '#eab308', surface: '#2e260d', accent: '#fde047', badge: '#4e4212' },
+  consistency: { frame: '#38bdf8', surface: '#102535', accent: '#7dd3fc', badge: '#1a3850' },
+} as const;
+
+const LUCKY_REROLL_IMAGE = require('../assets/jokers/lucky-reroll.png');
+
+const getPrimaryTag = (tags: Array<keyof typeof TAG_LABELS> | undefined) =>
+  tags?.[0] ?? 'consistency';
+
+const getActionTheme = (tags: Array<keyof typeof ACTION_CARD_THEME> | undefined) =>
+  ACTION_CARD_THEME[getPrimaryTag(tags)];
+
+const getJokerTheme = (tags: Array<keyof typeof JOKER_THEME> | undefined) =>
+  JOKER_THEME[getPrimaryTag(tags)];
 
 const PhaseCard = ({
   title,
@@ -45,18 +128,84 @@ const PhaseCard = ({
   </View>
 );
 
+const OverlayModal = ({
+  visible,
+  title,
+  children,
+  onClose,
+  dismissible = true,
+}: {
+  visible: boolean;
+  title: string;
+  children: React.ReactNode;
+  onClose: () => void;
+  dismissible?: boolean;
+}) => (
+  <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
+    <View style={styles.modalBackdrop}>
+      <View style={styles.modalCard}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>{title}</Text>
+          {dismissible ? (
+            <Pressable onPress={onClose} style={styles.iconButton}>
+              <Text style={styles.iconButtonText}>닫기</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {children}
+      </View>
+    </View>
+  </Modal>
+);
+
+const DieFace = ({
+  value,
+  selected,
+}: {
+  value: DiceValue;
+  selected: boolean;
+}) => (
+  <View style={[styles.dieFace, selected ? styles.dieFaceSelected : undefined]}>
+    <View style={styles.dieGrid}>
+      {DIE_PIP_MAP[value].map((visible, index) => (
+        <View key={`${value}-${index}`} style={styles.dieCell}>
+          {visible ? (
+            <View style={[styles.diePip, selected ? styles.diePipSelected : styles.diePipDefault]} />
+          ) : null}
+        </View>
+      ))}
+    </View>
+  </View>
+);
+
 export function RogueRollScreen() {
   const isDarkMode = useColorScheme() === 'dark';
+  const { height } = useWindowDimensions();
+  const isCompact = height < 860;
+  const [showGuide, setShowGuide] = useState(false);
+  const [showRunInfo, setShowRunInfo] = useState(false);
+  const [showDeckList, setShowDeckList] = useState(false);
+  const [selectedCardIndex, setSelectedCardIndex] = useState<number | null>(null);
+  const [selectedJokerIndex, setSelectedJokerIndex] = useState<number | null>(null);
+  const [draggingCardIndex, setDraggingCardIndex] = useState<number | null>(null);
+  const [isDraggingOverUseZone, setIsDraggingOverUseZone] = useState(false);
+  const [useZoneRect, setUseZoneRect] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const {
     state,
     stageDefinition,
+    totalAntes,
     boss,
     previewScore,
     purgeOptions,
     activeJokers,
     toggleDie,
-    selectAllDice,
     rerollSelectedDice,
+    refreshHandCards,
     playCard,
     submitHand,
     applyReward,
@@ -65,262 +214,1016 @@ export function RogueRollScreen() {
     continueFromShop,
     restartRun,
   } = useRogueRollGame();
+  const visibleCardSlotCount = Math.max(3, state.hand.drawCount, state.deck.hand.length);
+  const [displayDice, setDisplayDice] = useState(state.hand.dice);
+  const diceAnimationsRef = useRef(
+    state.hand.dice.map(() => new Animated.Value(0)),
+  );
+  const diceSelectAnimationsRef = useRef(
+    state.hand.dice.map(() => new Animated.Value(0)),
+  );
+  const cardSelectAnimationsRef = useRef<Animated.Value[]>([]);
+  const cardDragAnimationsRef = useRef<Animated.ValueXY[]>([]);
+  const jokerSelectAnimationsRef = useRef([0, 1, 2, 3, 4].map(() => new Animated.Value(0)));
+  const cardTooltipAnimation = useRef(new Animated.Value(0)).current;
+  const jokerTooltipAnimation = useRef(new Animated.Value(0)).current;
+  const useZoneRef = useRef<View | null>(null);
+  const previousDiceRef = useRef(state.hand.dice);
+  const mountedRef = useRef(false);
+  const intervalRefs = useRef<Array<ReturnType<typeof setInterval> | null>>(
+    state.hand.dice.map(() => null),
+  );
+  const timeoutRefs = useRef<Array<ReturnType<typeof setTimeout> | null>>(
+    state.hand.dice.map(() => null),
+  );
+
+  const overlayTitle = useMemo(() => {
+    if (state.phase === 'reward') {
+      return '보상 선택';
+    }
+    if (state.phase === 'shop') {
+      return '상점';
+    }
+    if (state.phase === 'purge') {
+      return '카드 제거';
+    }
+    if (state.phase === 'victory') {
+      return '런 완료';
+    }
+    if (state.phase === 'defeat') {
+      return '런 실패';
+    }
+    return '';
+  }, [state.phase]);
+
+  const selectedCardId =
+    selectedCardIndex !== null ? state.deck.hand[selectedCardIndex] : undefined;
+  const selectedCard = selectedCardId ? getActionCard(selectedCardId) : undefined;
+  const selectedJokerId =
+    selectedJokerIndex !== null ? state.jokers[selectedJokerIndex] : undefined;
+  const selectedJoker = selectedJokerId ? getJoker(selectedJokerId) : undefined;
+  const jokerSlotCount = Math.max(5, state.jokers.length);
+  const blindTypeLabel = stageDefinition.name;
+  const blindRuleText = boss ? boss.description : undefined;
+  const dismissActiveTooltip = useCallback(() => {
+    setSelectedCardIndex(null);
+    setSelectedJokerIndex(null);
+  }, []);
+  const selectedCardTooltipStyle = useMemo(() => {
+    if (selectedCardIndex === null) {
+      return undefined;
+    }
+
+    const tooltipWidthPercent = Math.min(40, Math.max(28, (100 / visibleCardSlotCount) * 1.4));
+    const slotWidthPercent = 100 / visibleCardSlotCount;
+    const slotCenterPercent = slotWidthPercent * (selectedCardIndex + 0.5);
+    const maxLeftPercent = 100 - tooltipWidthPercent;
+    const leftPercent = Math.min(
+      maxLeftPercent,
+      Math.max(0, slotCenterPercent - tooltipWidthPercent / 2),
+    );
+
+    return {
+      width: `${tooltipWidthPercent}%` as const,
+      left: `${leftPercent}%` as const,
+    };
+  }, [selectedCardIndex, visibleCardSlotCount]);
+  const selectedJokerTooltipStyle = useMemo(() => {
+    if (selectedJokerIndex === null) {
+      return undefined;
+    }
+
+    const tooltipWidthPercent = Math.min(58, Math.max(34, Math.round(180 / jokerSlotCount)));
+    const slotWidthPercent = 100 / jokerSlotCount;
+    const slotCenterPercent = slotWidthPercent * (selectedJokerIndex + 0.5);
+    const maxLeftPercent = 100 - tooltipWidthPercent;
+    const leftPercent = Math.min(
+      maxLeftPercent,
+      Math.max(0, slotCenterPercent - tooltipWidthPercent / 2),
+    );
+
+    return {
+      width: `${tooltipWidthPercent}%` as const,
+      left: `${leftPercent}%` as const,
+    };
+  }, [jokerSlotCount, selectedJokerIndex]);
+  const deckSections = useMemo(
+    () => [
+      { title: `손패 ${state.deck.hand.length}`, cards: state.deck.hand },
+      { title: `드로우 ${state.deck.drawPile.length}`, cards: state.deck.drawPile },
+      { title: `버림 ${state.deck.discardPile.length}`, cards: state.deck.discardPile },
+    ],
+    [state.deck.discardPile, state.deck.drawPile, state.deck.hand],
+  );
+
+  while (cardSelectAnimationsRef.current.length < visibleCardSlotCount) {
+    cardSelectAnimationsRef.current.push(new Animated.Value(0));
+  }
+
+  while (cardDragAnimationsRef.current.length < visibleCardSlotCount) {
+    cardDragAnimationsRef.current.push(new Animated.ValueXY({ x: 0, y: 0 }));
+  }
+
+  const handleCardPreview = (index: number) => {
+    setSelectedJokerIndex(null);
+    setSelectedCardIndex(current => (current === index ? null : index));
+  };
+
+  const handleJokerPreview = (index: number) => {
+    setSelectedCardIndex(null);
+    setSelectedJokerIndex(current => (current === index ? null : index));
+  };
+
+  const resetDraggedCardPosition = useCallback((index: number) => {
+    const dragAnimation = cardDragAnimationsRef.current[index];
+    if (!dragAnimation) {
+      return;
+    }
+
+    Animated.spring(dragAnimation, {
+      toValue: { x: 0, y: 0 },
+      friction: 7,
+      tension: 120,
+      useNativeDriver: true,
+    }).start();
+  }, []);
+
+  const updateUseZoneRect = useCallback(() => {
+    requestAnimationFrame(() => {
+      useZoneRef.current?.measureInWindow((x, y, width, height) => {
+        setUseZoneRect({ x, y, width, height });
+      });
+    });
+  }, []);
+
+  const isPointInsideUseZone = useCallback(
+    (moveX: number, moveY: number) =>
+    Boolean(
+      useZoneRect &&
+        moveX >= useZoneRect.x &&
+        moveX <= useZoneRect.x + useZoneRect.width &&
+        moveY >= useZoneRect.y &&
+        moveY <= useZoneRect.y + useZoneRect.height,
+    ),
+    [useZoneRect],
+  );
+
+  useEffect(() => {
+    if (selectedCardIndex !== null && selectedCardIndex >= state.deck.hand.length) {
+      setSelectedCardIndex(null);
+    }
+  }, [selectedCardIndex, state.deck.hand.length]);
+
+  useEffect(() => {
+    if (draggingCardIndex !== null) {
+      updateUseZoneRect();
+    }
+  }, [draggingCardIndex, updateUseZoneRect, visibleCardSlotCount]);
+
+  useEffect(() => {
+    if (draggingCardIndex !== null && draggingCardIndex >= state.deck.hand.length) {
+      setDraggingCardIndex(null);
+      setIsDraggingOverUseZone(false);
+    }
+  }, [draggingCardIndex, state.deck.hand.length]);
+
+  useEffect(() => {
+    const intervals = intervalRefs.current;
+    const timeouts = timeoutRefs.current;
+
+    return () => {
+      intervals.forEach(timer => {
+        if (timer) {
+          clearInterval(timer);
+        }
+      });
+      timeouts.forEach(timer => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      previousDiceRef.current = state.hand.dice;
+      setDisplayDice(state.hand.dice);
+      return;
+    }
+
+    const changedIndices = state.hand.dice.reduce<number[]>((indices, value, index) => {
+      if (previousDiceRef.current[index] !== value) {
+        indices.push(index);
+      }
+      return indices;
+    }, []);
+
+    if (changedIndices.length === 0) {
+      previousDiceRef.current = state.hand.dice;
+      return;
+    }
+
+    changedIndices.forEach(index => {
+      const animation = diceAnimationsRef.current[index];
+      const finalValue = state.hand.dice[index];
+
+      if (intervalRefs.current[index]) {
+        clearInterval(intervalRefs.current[index]!);
+      }
+
+      if (timeoutRefs.current[index]) {
+        clearTimeout(timeoutRefs.current[index]!);
+      }
+
+      animation.stopAnimation();
+      animation.setValue(0);
+
+      intervalRefs.current[index] = setInterval(() => {
+        setDisplayDice(currentDice => {
+          const nextDice = [...currentDice];
+          nextDice[index] = (Math.floor(Math.random() * 6) + 1) as DiceValue;
+          return nextDice as typeof currentDice;
+        });
+      }, 75);
+
+      Animated.timing(animation, {
+        toValue: 1,
+        duration: 360,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start(() => {
+        animation.setValue(0);
+      });
+
+      timeoutRefs.current[index] = setTimeout(() => {
+        if (intervalRefs.current[index]) {
+          clearInterval(intervalRefs.current[index]!);
+        }
+
+        setDisplayDice(currentDice => {
+          const nextDice = [...currentDice];
+          nextDice[index] = finalValue;
+          return nextDice as typeof currentDice;
+        });
+      }, 360);
+    });
+
+    previousDiceRef.current = state.hand.dice;
+  }, [state.hand.dice]);
+
+  useEffect(() => {
+    diceSelectAnimationsRef.current.forEach((animation, index) => {
+      Animated.spring(animation, {
+        toValue: state.hand.selectedDice.includes(index) ? 1 : 0,
+        friction: 6,
+        tension: 120,
+        useNativeDriver: true,
+      }).start();
+    });
+  }, [state.hand.selectedDice]);
+
+  useEffect(() => {
+    cardSelectAnimationsRef.current.forEach((animation, index) => {
+      Animated.spring(animation, {
+        toValue: selectedCardIndex === index && index < state.deck.hand.length ? 1 : 0,
+        friction: 7,
+        tension: 130,
+        useNativeDriver: true,
+      }).start();
+    });
+  }, [selectedCardIndex, state.deck.hand.length]);
+
+  useEffect(() => {
+    jokerSelectAnimationsRef.current.forEach((animation, index) => {
+      Animated.spring(animation, {
+        toValue: selectedJokerIndex === index ? 1 : 0,
+        friction: 7,
+        tension: 130,
+        useNativeDriver: true,
+      }).start();
+    });
+  }, [selectedJokerIndex]);
+
+  useEffect(() => {
+    if (!selectedCard) {
+      cardTooltipAnimation.setValue(0);
+      return;
+    }
+
+    Animated.timing(cardTooltipAnimation, {
+      toValue: 1,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [selectedCard, cardTooltipAnimation]);
+
+  useEffect(() => {
+    if (!selectedJoker) {
+      jokerTooltipAnimation.setValue(0);
+      return;
+    }
+
+    Animated.timing(jokerTooltipAnimation, {
+      toValue: 1,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [selectedJoker, jokerTooltipAnimation]);
+
+  const cardPanResponders = useMemo(
+    () =>
+      Array.from({ length: visibleCardSlotCount }, (_, index) =>
+        PanResponder.create({
+          onMoveShouldSetPanResponderCapture: (_, gestureState) =>
+            state.phase === 'playing' &&
+            index < state.deck.hand.length &&
+            (Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2),
+          onMoveShouldSetPanResponder: (_, gestureState) =>
+            state.phase === 'playing' &&
+            index < state.deck.hand.length &&
+            (Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2),
+          onPanResponderGrant: () => {
+            const dragAnimation = cardDragAnimationsRef.current[index];
+            dragAnimation?.stopAnimation();
+            dragAnimation?.setValue({ x: 0, y: 0 });
+            setDraggingCardIndex(index);
+            updateUseZoneRect();
+          },
+          onPanResponderMove: (_, gestureState) => {
+            cardDragAnimationsRef.current[index].setValue({
+              x: gestureState.dx,
+              y: gestureState.dy,
+            });
+            setIsDraggingOverUseZone(isPointInsideUseZone(gestureState.moveX, gestureState.moveY));
+          },
+          onPanResponderRelease: (_, gestureState) => {
+            const shouldUseCard = isPointInsideUseZone(gestureState.moveX, gestureState.moveY);
+
+            resetDraggedCardPosition(index);
+            setDraggingCardIndex(null);
+            setIsDraggingOverUseZone(false);
+
+            if (shouldUseCard) {
+              playCard(index);
+            }
+          },
+          onPanResponderTerminate: () => {
+            resetDraggedCardPosition(index);
+            setDraggingCardIndex(null);
+            setIsDraggingOverUseZone(false);
+          },
+        }),
+      ),
+    [
+      isPointInsideUseZone,
+      playCard,
+      resetDraggedCardPosition,
+      state.deck.hand.length,
+      state.phase,
+      updateUseZoneRect,
+      visibleCardSlotCount,
+    ],
+  );
 
   return (
     <SafeAreaView style={[styles.safeArea, isDarkMode ? styles.darkBackground : styles.lightBackground]}>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.heroCard}>
-          <Text style={styles.title}>RogueRoll Prototype</Text>
-          <Text style={styles.subtitle}>
-            주사위, 카드, 조커, 보스, 보상, 상점이 모두 연결된 세로형 MVP입니다.
-          </Text>
-          <Text style={styles.message}>{state.message}</Text>
-        </View>
-
-        <View style={styles.metricsRow}>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Stage</Text>
-            <Text style={styles.metricValue}>
-              {state.stage.stageIndex + 1} / 3
-            </Text>
-            <Text style={styles.metricHint}>{stageDefinition.name}</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Score</Text>
-            <Text style={styles.metricValue}>
-              {state.stage.currentScore} / {stageDefinition.targetScore}
-            </Text>
-            <Text style={styles.metricHint}>이번 블라인드 누적 점수</Text>
-          </View>
-        </View>
-
-        <View style={styles.metricsRow}>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Hands</Text>
-            <Text style={styles.metricValue}>{state.stage.remainingHands}</Text>
-            <Text style={styles.metricHint}>점수 획득 기회</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Rolls</Text>
-            <Text style={styles.metricValue}>
-              {state.stage.remainingRolls}
-              {state.hand.freeRerolls > 0 ? ` +${state.hand.freeRerolls}` : ''}
-            </Text>
-            <Text style={styles.metricHint}>남은 리롤 + 무료 리롤</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricLabel}>Gold</Text>
-            <Text style={styles.metricValue}>{state.gold}</Text>
-            <Text style={styles.metricHint}>상점 구매 자원</Text>
-          </View>
-        </View>
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Boss Rule</Text>
-          <Text style={styles.sectionValue}>{boss ? boss.name : '일반 블라인드'}</Text>
-          <Text style={styles.sectionDescription}>
-            {boss ? boss.description : '현재 스테이지에는 추가 보스 제약이 없습니다.'}
-          </Text>
-        </View>
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Dice</Text>
-          <View style={styles.diceRow}>
-            {state.hand.dice.map((value, index) => {
-              const isSelected = state.hand.selectedDice.includes(index);
-
-              return (
-                <Pressable
-                  key={`${index}-${value}`}
-                  onPress={() => toggleDie(index)}
-                  style={[styles.die, isSelected ? styles.dieSelected : undefined]}>
-                  <Text style={[styles.dieValue, isSelected ? styles.dieValueSelected : undefined]}>{value}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <View style={styles.buttonRow}>
-            <Pressable onPress={selectAllDice} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>모두 선택</Text>
-            </Pressable>
-            <Pressable onPress={rerollSelectedDice} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>선택 리롤</Text>
-            </Pressable>
-            <Pressable onPress={submitHand} style={styles.primaryButton}>
-              <Text style={styles.primaryButtonText}>점수 확정</Text>
-            </Pressable>
-          </View>
-        </View>
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Projected Score</Text>
-          <Text style={styles.previewHeadline}>
-            {HAND_RANK_LABELS[previewScore.handRank]} | {previewScore.finalScore}점
-          </Text>
-          <Text style={styles.sectionDescription}>
-            공식: ({previewScore.handBase} hand + {previewScore.diceBase} dice + {previewScore.bonusBase} bonus) x{' '}
-            {previewScore.multiplier}
-          </Text>
-          {previewScore.notes.map(note => (
-            <Text key={note} style={styles.noteText}>
-              - {note}
-            </Text>
-          ))}
-        </View>
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Cards In Hand</Text>
-          <Text style={styles.sectionDescription}>
-            Hand당 최대 2장 사용. 남은 손패는 Hand 종료 시 버림 더미로 이동합니다.
-          </Text>
-          {state.deck.hand.map((cardId, index) => {
-            const card = getActionCard(cardId);
-            if (!card) {
-              return null;
-            }
-
-            return (
-              <Pressable
-                key={`${cardId}-${index}`}
-                onPress={() => playCard(index)}
-                style={styles.listButton}>
-                <Text style={styles.listButtonTitle}>{card.name}</Text>
-                <Text style={styles.listButtonBody}>{card.description}</Text>
+      <View style={[styles.screen, isCompact ? styles.screenCompact : undefined]}>
+        {selectedCard || selectedJoker ? (
+          <Pressable onPress={dismissActiveTooltip} style={styles.tooltipDismissOverlay} />
+        ) : null}
+        <View style={[styles.topRow, isCompact ? styles.topRowCompact : undefined]}>
+          <View style={[styles.scorePanel, isCompact ? styles.scorePanelCompact : undefined]}>
+            <View style={styles.panelHeader}>
+              <Text style={styles.panelLabel}>현재 블라인드</Text>
+              <Pressable onPress={() => setShowGuide(true)} style={styles.iconButton}>
+                <Text style={styles.iconButtonText}>족보</Text>
               </Pressable>
-            );
-          })}
-        </View>
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Jokers</Text>
-          <Text style={styles.sectionDescription}>왼쪽부터 적용되며, 보스는 오른쪽 슬롯부터 막습니다.</Text>
-          {activeJokers.activeJokerIds.map(jokerId => {
-            const joker = getJoker(jokerId);
-            if (!joker) {
-              return null;
-            }
-
-            return (
-              <View key={jokerId} style={styles.listItem}>
-                <Text style={styles.listButtonTitle}>{joker.name}</Text>
-                <Text style={styles.listButtonBody}>{joker.description}</Text>
-              </View>
-            );
-          })}
-          {activeJokers.disabledJokerIds.map(jokerId => {
-            const joker = getJoker(jokerId);
-            if (!joker) {
-              return null;
-            }
-
-            return (
-              <View key={jokerId} style={[styles.listItem, styles.disabledItem]}>
-                <Text style={styles.listButtonTitle}>{joker.name} (비활성)</Text>
-                <Text style={styles.listButtonBody}>{joker.description}</Text>
-              </View>
-            );
-          })}
-        </View>
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Deck Economy</Text>
-          <Text style={styles.sectionDescription}>
-            Draw {state.deck.drawPile.length} / Discard {state.deck.discardPile.length} / Hand {state.deck.hand.length}
-          </Text>
-        </View>
-
-        {state.lastScore ? (
-          <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Last Hand Result</Text>
-            <Text style={styles.previewHeadline}>
-              {HAND_RANK_LABELS[state.lastScore.handRank]} | {state.lastScore.finalScore}점
+            </View>
+            <Text style={[styles.scoreValue, isCompact ? styles.scoreValueCompact : undefined]}>
+              {state.stage.currentScore}
+              <Text style={styles.scoreDivider}> / {stageDefinition.targetScore}</Text>
             </Text>
-            <Text style={styles.sectionDescription}>
-              골드 변화: +{state.lastScore.gainedGold} | 활성 조커 {state.lastScore.activeJokerIds.length}개
-            </Text>
-            {state.lastScore.notes.map(note => (
-              <Text key={note} style={styles.noteText}>
-                - {note}
+            <Text style={styles.scoreHint}>{stageDefinition.name}</Text>
+
+            <View style={styles.previewBar}>
+              <Text style={styles.previewRank}>{HAND_RANK_LABELS[previewScore.handRank]}</Text>
+              <Text style={styles.previewScore}>{previewScore.finalScore}점</Text>
+            </View>
+          </View>
+
+          <View style={[styles.sidePanel, isCompact ? styles.sidePanelCompact : undefined]}>
+            <Pressable onPress={() => setShowRunInfo(true)} style={styles.bossPanel}>
+              <Text style={styles.bossLabel}>BLIND / RUN INFO</Text>
+              <Text numberOfLines={1} style={styles.bossName}>
+                {blindTypeLabel}
               </Text>
-            ))}
-          </View>
-        ) : null}
-
-        {state.phase === 'reward' ? (
-          <View style={styles.overlayCard}>
-            <Text style={styles.overlayTitle}>Reward Pick</Text>
-            <Text style={styles.overlayDescription}>세 가지 보상 중 하나를 골라 다음 스테이지용 빌드를 만드세요.</Text>
-            {state.rewardOptions.map(option => (
-              <Pressable key={option.id} onPress={() => applyReward(option)} style={styles.listButton}>
-                <Text style={styles.listButtonTitle}>{option.title}</Text>
-                <Text style={styles.listButtonBody}>{option.description}</Text>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-
-        {state.phase === 'shop' ? (
-          <View style={styles.overlayCard}>
-            <Text style={styles.overlayTitle}>Shop</Text>
-            <Text style={styles.overlayDescription}>골드를 써서 빌드를 다듬거나, 다음 블라인드로 넘어가세요.</Text>
-            {state.shopItems.map(item => (
-              <Pressable key={item.id} onPress={() => buyShopItem(item)} style={styles.listButton}>
-                <Text style={styles.listButtonTitle}>
-                  {item.title} | {item.price}G
+              {blindRuleText ? (
+                <Text numberOfLines={2} style={styles.bossDescription}>
+                  {blindRuleText}
                 </Text>
-                <Text style={styles.listButtonBody}>{item.description}</Text>
-              </Pressable>
-            ))}
-            <Pressable onPress={continueFromShop} style={styles.primaryButton}>
-              <Text style={styles.primaryButtonText}>다음 스테이지</Text>
+              ) : null}
+              {/* <Text numberOfLines={1} style={styles.bossMetaText}>
+                Ante {state.stage.ante}/{totalAntes} · Stage {state.stage.stageIndex + 1}/3
+              </Text> */}
             </Pressable>
-          </View>
-        ) : null}
+            <View style={styles.stageSummaryRow}>
+              <View style={[styles.stageTile, styles.anteTile]}>
+                <Text style={styles.miniLabel}>ANTE</Text>
+                <Text style={styles.stageTileValue}>
+                  {state.stage.ante}/{totalAntes}
+                </Text>
+              </View>
+              <View style={styles.stageTile}>
+                <Text style={styles.miniLabel}>STAGE</Text>
+                <Text style={styles.stageTileValue}>{state.stage.stageIndex + 1}/3</Text>
+              </View>
+            </View>
 
-        {state.phase === 'purge' ? (
-          <View style={styles.overlayCard}>
-            <Text style={styles.overlayTitle}>Deck Trim</Text>
-            <Text style={styles.overlayDescription}>삭제할 카드를 선택하세요. 덱 압축이 빌드 안정성을 올립니다.</Text>
-            {purgeOptions.map(option => {
-              const card = getActionCard(option.cardId);
-              if (!card) {
-                return null;
-              }
+            <View style={styles.topResourceStrip}>
+              <View style={styles.topResourceItem}>
+                <Text style={styles.topResourceLabel}>HAND</Text>
+                <Text style={styles.topResourceValue}>{state.stage.remainingHands}</Text>
+              </View>
+              <View style={styles.topResourceItem}>
+                <Text style={styles.topResourceLabel}>ROLL</Text>
+                <Text style={styles.topResourceValue}>
+                  {state.stage.remainingRolls}
+                  {state.hand.freeRerolls > 0 ? `+${state.hand.freeRerolls}` : ''}
+                </Text>
+              </View>
+              <View style={styles.topResourceItem}>
+                <Text style={styles.topResourceLabel}>GOLD</Text>
+                <Text style={styles.topResourceValue}>{state.gold}</Text>
+              </View>
+            </View>
+
+          </View>
+        </View>
+
+        <View style={[styles.jokerPanel, isCompact ? styles.jokerPanelCompact : undefined]}>
+          <View style={styles.panelHeader}>
+            <Text style={styles.panelLabel}>JOKERS</Text>
+            <Text style={styles.deckCounts}>{state.jokers.length}/5</Text>
+          </View>
+
+          <View style={styles.jokerRowWrap}>
+            {selectedJoker ? (
+              <Animated.View
+                style={[
+                  styles.jokerTooltip,
+                  styles.jokerTooltipFloating,
+                  selectedJokerTooltipStyle,
+                  {
+                    opacity: jokerTooltipAnimation,
+                    transform: [
+                      {
+                        translateY: jokerTooltipAnimation.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [8, 0],
+                        }),
+                      },
+                    ],
+                  },
+                ]}>
+                <Text style={styles.cardTooltipTitle}>{selectedJoker.name}</Text>
+                <Text style={styles.cardTooltipBody}>{selectedJoker.description}</Text>
+                <Text style={styles.jokerTooltipMeta}>
+                  {JOKER_RARITY_LABELS[selectedJoker.rarity]} · {JOKER_TRIGGER_LABELS[selectedJoker.trigger]}
+                  {activeJokers.disabledJokerIds.includes(selectedJoker.id) ? ' · 현재 비활성' : ''}
+                </Text>
+                <View style={styles.jokerTooltipArrow} />
+              </Animated.View>
+            ) : null}
+
+            <View style={[styles.jokerRow, isCompact ? styles.jokerRowCompact : undefined]}>
+            {Array.from({ length: jokerSlotCount }, (_, slotIndex) => {
+              const jokerId = state.jokers[slotIndex];
+              const joker = jokerId ? getJoker(jokerId) : undefined;
+              const isDisabled = activeJokers.disabledJokerIds.includes(jokerId ?? '');
+              const isSelected = selectedJokerIndex === slotIndex;
+              const theme = getJokerTheme(joker?.tags);
+              const rarityTheme = joker ? JOKER_RARITY_COLORS[joker.rarity] : undefined;
+              const badgeLabel = joker ? TAG_LABELS[getPrimaryTag(joker.tags)] : 'EMPTY';
+              const animation = jokerSelectAnimationsRef.current[slotIndex];
+              const animatedStyle = {
+                transform: [
+                  {
+                    translateY: animation.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0, -6],
+                    }),
+                  },
+                  {
+                    scale: animation.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [1, 1.03],
+                    }),
+                  },
+                ],
+              };
 
               return (
-                <Pressable
-                  key={`${option.zone}-${option.index}-${option.cardId}`}
-                  onPress={() => removeDeckCard(option)}
-                  style={styles.listButton}>
-                  <Text style={styles.listButtonTitle}>
-                    {card.name} | {option.zone === 'drawPile' ? 'Draw' : 'Discard'}
-                  </Text>
-                  <Text style={styles.listButtonBody}>{card.description}</Text>
-                </Pressable>
+                <Animated.View key={`joker-slot-${slotIndex}`} style={animatedStyle}>
+                  <Pressable
+                    disabled={!joker}
+                    onPress={() => handleJokerPreview(slotIndex)}
+                    style={[
+                      styles.jokerCard,
+                      !joker ? styles.emptyJokerCard : undefined,
+                      joker
+                        ? {
+                            backgroundColor: theme.surface,
+                            borderColor: rarityTheme?.frame ?? theme.frame,
+                          }
+                        : undefined,
+                      isCompact ? styles.jokerCardCompact : undefined,
+                      isSelected ? styles.jokerCardActive : undefined,
+                      isSelected && rarityTheme ? { borderColor: rarityTheme.frame } : undefined,
+                      isSelected && rarityTheme ? { shadowColor: rarityTheme.glow } : undefined,
+                      isDisabled ? styles.jokerDisabled : undefined,
+                    ]}>
+                    {joker ? (
+                      <>
+                        {joker.id === 'lucky_reroll' ? (
+                          <ImageBackground
+                            source={LUCKY_REROLL_IMAGE}
+                            imageStyle={styles.jokerArtImage}
+                            resizeMode="cover"
+                            style={styles.jokerArtCard}>
+                            <View pointerEvents="none" style={styles.jokerArtOverlay} />
+                          </ImageBackground>
+                        ) : (
+                          <>
+                            <View pointerEvents="none" style={styles.cardFrameBorder} />
+                            <View
+                              pointerEvents="none"
+                              style={[styles.jokerFrameStripe, { backgroundColor: theme.frame }]}
+                            />
+                            <View pointerEvents="none" style={styles.cardFrameSpark} />
+                            <View style={styles.cardTopRow}>
+                              <Text
+                                style={[
+                                  styles.miniBadge,
+                                  { backgroundColor: theme.badge, color: theme.accent },
+                                ]}>
+                                {badgeLabel}
+                              </Text>
+                            </View>
+                            <View
+                              style={[
+                                styles.jokerGlyph,
+                                { backgroundColor: theme.frame, shadowColor: theme.frame },
+                              ]}>
+                              <View pointerEvents="none" style={styles.glyphHalo} />
+                              <Text style={styles.jokerGlyphText}>{joker.name.slice(0, 1)}</Text>
+                            </View>
+                            <Text numberOfLines={2} style={styles.jokerTitle}>
+                              {joker.name}
+                            </Text>
+                            <View style={[styles.cardBottomBadge, { backgroundColor: theme.badge }]}>
+                              <Text numberOfLines={1} style={styles.jokerMeta}>
+                                {isDisabled ? 'OFF' : 'INFO'}
+                              </Text>
+                            </View>
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <View style={styles.emptyJokerSlot} />
+                    )}
+                  </Pressable>
+                </Animated.View>
+              );
+            })}
+            </View>
+          </View>
+        </View>
+
+        <View style={[styles.boardPanel, isCompact ? styles.boardPanelCompact : undefined]}>
+          <View pointerEvents="none" style={styles.boardGlowOrbA} />
+          <View pointerEvents="none" style={styles.boardGlowOrbB} />
+          <View pointerEvents="none" style={styles.boardGrid} />
+          <View style={styles.boardHeader}>
+            <Text style={styles.boardTitle}>DICE BOARD</Text>
+            <Text style={styles.boardFormula}>
+              ({previewScore.handBase}+{previewScore.diceBase}+{previewScore.bonusBase}) x {previewScore.multiplier}
+            </Text>
+          </View>
+
+          <View style={styles.statusBanner}>
+            <Text numberOfLines={1} style={styles.statusBannerText}>
+              {state.message}
+            </Text>
+          </View>
+
+          <View style={styles.diceRow}>
+            {displayDice.map((value, index) => {
+              const isSelected = state.hand.selectedDice.includes(index);
+              const animation = diceAnimationsRef.current[index];
+              const selectAnimation = diceSelectAnimationsRef.current[index];
+              const animatedStyle = {
+                transform: [
+                  {
+                    rotate: animation.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0deg', '360deg'],
+                    }),
+                  },
+                  {
+                    scale: animation.interpolate({
+                      inputRange: [0, 0.5, 1],
+                      outputRange: [1, 1.06, 1],
+                    }),
+                  },
+                  {
+                    translateY: animation.interpolate({
+                      inputRange: [0, 0.5, 1],
+                      outputRange: [0, -4, 0],
+                    }),
+                  },
+                  {
+                    translateY: selectAnimation.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0, -8],
+                    }),
+                  },
+                  {
+                    scale: selectAnimation.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [1, 1.05],
+                    }),
+                  },
+                ],
+              };
+
+              return (
+                <Animated.View key={`die-${index}`} style={animatedStyle}>
+                  <Pressable
+                    onPress={() => toggleDie(index)}
+                    style={[
+                      styles.die,
+                      isCompact ? styles.dieCompact : undefined,
+                      isSelected ? styles.dieSelected : undefined,
+                    ]}>
+                    <DieFace value={value} selected={isSelected} />
+                  </Pressable>
+                </Animated.View>
               );
             })}
           </View>
-        ) : null}
 
-        {state.phase === 'victory' ? (
-          <PhaseCard
-            title="Run Complete"
-            description="보스 블라인드를 돌파했습니다. 현재 구조는 1회 런 기준 MVP이며, 이후 안테 확장이나 메타 성장 시스템을 붙이기 좋습니다."
-            actionLabel="새 런 시작"
-            onPress={restartRun}
-          />
-        ) : null}
+          {previewScore.notes.length > 0 ? (
+            <View style={styles.notesPanel}>
+              {previewScore.notes.slice(0, 1).map(note => (
+                <Text key={note} numberOfLines={1} style={styles.noteText}>
+                  - {note}
+                </Text>
+              ))}
+            </View>
+          ) : null}
+        </View>
 
-        {state.phase === 'defeat' ? (
-          <PhaseCard
-            title="Run Failed"
-            description="이번 빌드는 목표 점수에 도달하지 못했습니다. 조커 순서와 덱 압축을 다시 시험해보세요."
-            actionLabel="다시 도전"
-            onPress={restartRun}
-          />
-        ) : null}
-      </ScrollView>
+        <View style={[styles.cardPanel, isCompact ? styles.cardPanelCompact : undefined]}>
+          <View style={styles.panelHeader}>
+            <Text style={styles.panelLabel}>HAND CARDS</Text>
+            <View style={styles.cardPanelHeaderActions}>
+              {state.phase === 'playing' ? (
+                <Pressable
+                  disabled={state.hand.handRefreshes <= 0}
+                  onPress={refreshHandCards}
+                  style={[
+                    styles.cardRefreshButton,
+                    state.hand.handRefreshes <= 0 ? styles.cardRefreshButtonDisabled : undefined,
+                  ]}>
+                  <Text
+                    style={[
+                      styles.cardRefreshButtonText,
+                      state.hand.handRefreshes <= 0 ? styles.cardRefreshButtonTextDisabled : undefined,
+                    ]}>
+                    교체 {state.hand.handRefreshes}
+                  </Text>
+                </Pressable>
+              ) : null}
+              <View style={styles.deckCountsRow}>
+                <Text style={styles.deckCounts}>
+                  D {state.deck.drawPile.length} / X {state.deck.discardPile.length}
+                </Text>
+                <Pressable onPress={() => setShowDeckList(true)} style={styles.deckListButton}>
+                  <Text style={styles.deckListButtonText}>덱</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.cardRowWrap}>
+            {selectedCard ? (
+              <Animated.View
+                style={[
+                  styles.cardTooltip,
+                  styles.cardTooltipFloating,
+                  selectedCardTooltipStyle,
+                  {
+                    opacity: cardTooltipAnimation,
+                    transform: [
+                      {
+                        translateY: cardTooltipAnimation.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [8, 0],
+                        }),
+                      },
+                    ],
+                  },
+                ]}>
+                <Text style={styles.cardTooltipTitle}>{selectedCard.name}</Text>
+                <Text style={styles.cardTooltipBody}>{selectedCard.description}</Text>
+                <View style={styles.cardTooltipArrow} />
+              </Animated.View>
+            ) : null}
+
+            <View style={[styles.cardRow, visibleCardSlotCount > 3 ? styles.cardRowDense : undefined]}>
+            {Array.from({ length: visibleCardSlotCount }, (_, index) => {
+              const cardId = state.deck.hand[index];
+              const card = cardId ? getActionCard(cardId) : undefined;
+              const isPreviewing = selectedCardIndex === index;
+              const theme = getActionTheme(card?.tags);
+              const badgeLabel = card ? TAG_LABELS[getPrimaryTag(card.tags)] : 'A';
+              const animation = cardSelectAnimationsRef.current[index];
+              const dragAnimation = cardDragAnimationsRef.current[index];
+              const panResponder = cardPanResponders[index];
+              const isDragging = draggingCardIndex === index;
+              const animatedStyle = {
+                transform: [
+                  ...(isDragging
+                    ? [
+                        {
+                          translateX: dragAnimation.x,
+                        },
+                        {
+                          translateY: dragAnimation.y,
+                        },
+                        {
+                          scale: 1.03,
+                        },
+                      ]
+                    : [
+                        {
+                          translateY: animation.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, -7],
+                          }),
+                        },
+                        {
+                          scale: animation.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [1, 1.04],
+                          }),
+                        },
+                      ]),
+                ],
+              };
+
+              return (
+                <Animated.View
+                  key={`card-slot-${index}-${cardId ?? 'empty'}`}
+                  style={[
+                    animatedStyle,
+                    styles.cardSlot,
+                    isDragging ? styles.draggingCardSlot : undefined,
+                  ]}
+                  {...(card ? panResponder.panHandlers : {})}>
+                  <Pressable
+                    disabled={!card}
+                    onPress={() => handleCardPreview(index)}
+                    style={[
+                      styles.handCard,
+                      card
+                        ? {
+                            backgroundColor: theme.surface,
+                            borderColor: theme.frame,
+                          }
+                        : undefined,
+                      isCompact ? styles.handCardCompact : undefined,
+                      isPreviewing ? styles.handCardActive : undefined,
+                      isDragging ? styles.handCardDragging : undefined,
+                      !card ? styles.emptyCard : undefined,
+                    ]}>
+                    <View pointerEvents="none" style={styles.cardFrameBorder} />
+                    <View
+                      pointerEvents="none"
+                      style={[styles.actionFrameStripe, card ? { backgroundColor: theme.frame } : undefined]}
+                    />
+                    <View pointerEvents="none" style={styles.cardFrameSpark} />
+                    <View style={styles.cardTopRow}>
+                      <Text
+                        style={[styles.miniBadge, card ? { backgroundColor: theme.badge, color: theme.accent } : undefined]}>
+                        {badgeLabel}
+                      </Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.cardFace,
+                        card ? { borderColor: theme.frame } : undefined,
+                      ]}>
+                      <View pointerEvents="none" style={styles.cardFaceShine} />
+                      <Text style={[styles.cardGlyph, card ? { color: theme.accent } : undefined]}>
+                        {card ? card.name.slice(0, 1) : '?'}
+                      </Text>
+                      <Text numberOfLines={1} style={styles.handCardTitle}>
+                        {card ? card.name : 'EMPTY'}
+                      </Text>
+                    </View>
+                  </Pressable>
+                </Animated.View>
+              );
+            })}
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.bottomBar}>
+          {draggingCardIndex !== null ? (
+            <View
+              ref={useZoneRef}
+              collapsable={false}
+              onLayout={updateUseZoneRect}
+              pointerEvents="none"
+              style={[
+                styles.bottomUseZone,
+                styles.bottomUseZoneWide,
+                isDraggingOverUseZone ? styles.bottomUseZoneActive : undefined,
+              ]}>
+              <Text style={styles.bottomUseZoneLabel}>
+                {isDraggingOverUseZone ? '하단 아무 곳에 놓으면 사용됩니다' : '하단 점수 영역 전체에 드롭해서 카드 사용'}
+              </Text>
+            </View>
+          ) : (
+            <>
+              <Pressable onPress={rerollSelectedDice} style={styles.bottomButton}>
+                <Text style={styles.bottomButtonText}>리롤</Text>
+              </Pressable>
+              <Pressable onPress={submitHand} style={[styles.bottomButton, styles.primaryBottomButton, styles.wideBottomButton]}>
+                <Text style={styles.primaryBottomButtonText}>점수 확정</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
+
+        <OverlayModal visible={showGuide} title="족보 정보" onClose={() => setShowGuide(false)}>
+          <Text style={styles.modalIntro}>핵심 공식: (족보 기본값 + 주사위 합 + 보너스) x 배수</Text>
+          <View style={styles.guideList}>
+            {HAND_RANK_GUIDE.map(item => (
+              <View key={item.rank} style={styles.guideRow}>
+                <Text style={styles.guideRank}>{HAND_RANK_LABELS[item.rank]}</Text>
+                <Text style={styles.guideBase}>{item.base}</Text>
+                <Text style={styles.guideHint}>{item.hint}</Text>
+              </View>
+            ))}
+          </View>
+        </OverlayModal>
+
+        <OverlayModal visible={showRunInfo} title="런 정보" onClose={() => setShowRunInfo(false)}>
+          <Text style={styles.modalIntro}>
+            보스 제약, 최근 점수, 현재 조커 상태를 확인하는 보조 패널입니다.
+          </Text>
+          <View style={styles.infoCard}>
+            <Text style={styles.infoCardTitle}>현재 진행</Text>
+            <Text style={styles.infoCardBody}>
+              Ante {state.stage.ante}/{totalAntes} · Stage {state.stage.stageIndex + 1}/3 · {stageDefinition.name}
+            </Text>
+          </View>
+          <View style={styles.infoCard}>
+            <Text style={styles.infoCardTitle}>현재 블라인드</Text>
+            <Text style={styles.infoCardBody}>{stageDefinition.name}</Text>
+          </View>
+          {boss ? (
+            <View style={styles.infoCard}>
+              <Text style={styles.infoCardTitle}>현재 제약</Text>
+              <Text style={styles.infoCardBody}>{boss.description}</Text>
+            </View>
+          ) : null}
+          <View style={styles.infoCard}>
+            <Text style={styles.infoCardTitle}>현재 덱</Text>
+            <Text style={styles.infoCardBody}>
+              Draw {state.deck.drawPile.length} / Discard {state.deck.discardPile.length} / Hand {state.deck.hand.length}
+            </Text>
+          </View>
+          {state.lastScore ? (
+            <View style={styles.infoCard}>
+              <Text style={styles.infoCardTitle}>직전 Hand</Text>
+              <Text style={styles.infoCardBody}>
+                {HAND_RANK_LABELS[state.lastScore.handRank]} | {state.lastScore.finalScore}점 | 골드 +
+                {state.lastScore.gainedGold}
+              </Text>
+            </View>
+          ) : null}
+        </OverlayModal>
+
+        <OverlayModal visible={showDeckList} title="덱 리스트" onClose={() => setShowDeckList(false)}>
+          <Text style={styles.modalIntro}>현재 손패, 드로우 더미, 버림 더미 순서로 보여줍니다.</Text>
+          <View style={styles.deckListSectionWrap}>
+            {deckSections.map(section => (
+              <View key={section.title} style={styles.deckListSection}>
+                <Text style={styles.deckListSectionTitle}>{section.title}</Text>
+                {section.cards.length > 0 ? (
+                  <View style={styles.deckListItems}>
+                    {section.cards.map((cardId, index) => (
+                      <Text key={`${section.title}-${cardId}-${index}`} style={styles.deckListItem}>
+                        {index + 1}. {getActionCard(cardId)?.name ?? cardId}
+                      </Text>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={styles.deckListEmpty}>비어 있음</Text>
+                )}
+              </View>
+            ))}
+          </View>
+        </OverlayModal>
+
+        <OverlayModal visible={state.phase !== 'playing'} title={overlayTitle} onClose={() => undefined} dismissible={false}>
+          {state.phase === 'reward' ? (
+            <View style={styles.overlayList}>
+              <Text style={styles.modalIntro}>세 가지 중 하나를 골라 다음 블라인드용 빌드를 만드세요.</Text>
+              {state.rewardOptions.map(option => (
+                <Pressable key={option.id} onPress={() => applyReward(option)} style={styles.overlayButton}>
+                  <Text style={styles.overlayButtonTitle}>{option.title}</Text>
+                  <Text numberOfLines={2} style={styles.overlayButtonBody}>
+                    {option.description}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+
+          {state.phase === 'shop' ? (
+            <View style={styles.overlayList}>
+              <Text style={styles.modalIntro}>골드를 써서 빌드를 다듬고 다음 스테이지로 이동합니다.</Text>
+              {state.shopItems.map(item => (
+                <Pressable key={item.id} onPress={() => buyShopItem(item)} style={styles.overlayButton}>
+                  <Text style={styles.overlayButtonTitle}>
+                    {item.title} | {item.price}G
+                  </Text>
+                  <Text numberOfLines={2} style={styles.overlayButtonBody}>
+                    {item.description}
+                  </Text>
+                </Pressable>
+              ))}
+              <Pressable onPress={continueFromShop} style={styles.largePrimaryButton}>
+                <Text style={styles.largePrimaryButtonText}>다음 스테이지</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {state.phase === 'purge' ? (
+            <View style={styles.overlayList}>
+              <Text style={styles.modalIntro}>덱 압축용으로 제거할 카드를 선택하세요.</Text>
+              {purgeOptions.map(option => {
+                const card = getActionCard(option.cardId);
+                if (!card) {
+                  return null;
+                }
+
+                return (
+                  <Pressable
+                    key={`${option.zone}-${option.index}-${option.cardId}`}
+                    onPress={() => removeDeckCard(option)}
+                    style={styles.overlayButton}>
+                    <Text style={styles.overlayButtonTitle}>
+                      {card.name} | {option.zone === 'drawPile' ? 'Draw' : 'Discard'}
+                    </Text>
+                    <Text numberOfLines={2} style={styles.overlayButtonBody}>
+                      {card.description}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
+
+          {state.phase === 'victory' ? (
+            <PhaseCard
+              title="Run Complete"
+              description="8엔티의 보스 블라인드까지 모두 돌파했습니다. 이번 프로토타입 런을 완전히 클리어했습니다."
+              actionLabel="새 런 시작"
+              onPress={restartRun}
+            />
+          ) : null}
+
+          {state.phase === 'defeat' ? (
+            <PhaseCard
+              title="Run Failed"
+              description="이번 빌드는 목표 점수에 도달하지 못했습니다. 조커 순서와 덱 압축을 다시 시험해보세요."
+              actionLabel="다시 도전"
+              onPress={restartRun}
+            />
+          ) : null}
+        </OverlayModal>
+      </View>
     </SafeAreaView>
   );
 }
@@ -330,116 +1233,1024 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   darkBackground: {
-    backgroundColor: '#101217',
+    backgroundColor: '#eaf7ff',
   },
   lightBackground: {
-    backgroundColor: '#f4f5f7',
+    backgroundColor: '#eaf7ff',
   },
-  content: {
-    padding: 16,
-    gap: 14,
+  screen: {
+    flex: 1,
+    padding: 12,
+    gap: 10,
+    backgroundColor: '#eaf7ff',
   },
-  heroCard: {
-    backgroundColor: '#1d2230',
-    borderRadius: 20,
-    padding: 18,
+  screenCompact: {
+    padding: 10,
     gap: 8,
   },
-  title: {
+  tooltipDismissOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 4,
+  },
+  topRow: {
+    flex: 1.42,
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'stretch',
+  },
+  topRowCompact: {
+    flex: 1.22,
+    gap: 8,
+  },
+  scorePanel: {
+    flex: 1.1,
+    backgroundColor: '#f8fcff',
+    borderRadius: 18,
+    padding: 14,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+    justifyContent: 'space-between',
+  },
+  scorePanelCompact: {
+    padding: 12,
+    gap: 6,
+  },
+  sidePanel: {
+    flex: 1.12,
+    gap: 8,
+    justifyContent: 'flex-start',
+  },
+  sidePanelCompact: {
+    gap: 8,
+  },
+  stageSummaryRow: {
+    flexDirection: 'row',
+    gap: 8,
+    // flex: 1.02,
+  },
+  panelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    // marginBottom: 10,
+  },
+  panelLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#5e89ab',
+    letterSpacing: 0.8,
+    // marginTop: 10,
+  },
+  iconButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#d9efff',
+  },
+  iconButtonText: {
+    color: '#29516f',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  scoreValue: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#18344e',
+  },
+  scoreValueCompact: {
     fontSize: 24,
+  },
+  scoreDivider: {
+    fontSize: 15,
+    color: '#6b91b1',
+  },
+  scoreHint: {
+    fontSize: 12,
+    color: '#6b91b1',
+  },
+  previewBar: {
+    borderRadius: 14,
+    backgroundColor: '#e7f5ff',
+    padding: 10,
+    gap: 3,
+  },
+  previewRank: {
+    fontSize: 12,
+    color: '#5d88a9',
+    fontWeight: '700',
+  },
+  previewScore: {
+    fontSize: 20,
+    color: '#ffdd86',
+    fontWeight: '800',
+  },
+  stageTile: {
+    flex: 1,
+    backgroundColor: '#f8fcff',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+    minHeight: 0,
+    justifyContent: 'center',
+  },
+  anteTile: {
+    flex: 0.92,
+  },
+  statusBanner: {
+    borderRadius: 14,
+    backgroundColor: '#f8fcff',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: '#ead0cd',
+  },
+  statusBannerText: {
+    fontSize: 10,
+    color: '#6e6666',
+    lineHeight: 13,
+  },
+  topResourceStrip: {
+    flexDirection: 'row',
+    gap: 6,
+    // flex: 0.72,
+  },
+  topResourceItem: {
+    flex: 1,
+    borderRadius: 12,
+    backgroundColor: '#f8fcff',
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+  },
+  topResourceLabel: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: '#6e95b5',
+  },
+  topResourceValue: {
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#173450',
+  },
+  stageTileValue: {
+    marginTop: 4,
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#173450',
+  },
+  miniStat: {
+    backgroundColor: '#121925',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#203144',
+  },
+  miniLabel: {
+    fontSize: 10,
+    color: '#88aeca',
+    fontWeight: '700',
+  },
+  miniValue: {
+    marginTop: 4,
+    fontSize: 18,
     fontWeight: '700',
     color: '#ffffff',
   },
-  subtitle: {
-    fontSize: 14,
-    color: '#c9d1e8',
-    lineHeight: 20,
-  },
-  message: {
-    fontSize: 13,
-    color: '#8fe3ff',
-    lineHeight: 18,
-  },
-  metricsRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  metricCard: {
+  bossPanel: {
     flex: 1,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f8fcff',
     borderRadius: 16,
-    padding: 14,
+    padding: 9,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+    minHeight: 0,
+    justifyContent: 'center',
+  },
+  bossLabel: {
+    fontSize: 10,
+    color: '#6d94b3',
+    fontWeight: '700',
+  },
+  bossName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#173450',
+  },
+  bossDescription: {
+    fontSize: 10,
+    lineHeight: 13,
+    color: '#5c7f9d',
+  },
+  bossMetaText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#88a4bd',
+  },
+  jokerPanel: {
+    flex: 0.9,
+    backgroundColor: '#f8fcff',
+    borderRadius: 18,
+    padding: 10,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+  },
+  jokerPanelCompact: {
+    flex: 0.78,
+    padding: 8,
     gap: 6,
   },
-  metricLabel: {
-    fontSize: 12,
-    color: '#6d7483',
-    textTransform: 'uppercase',
+  jokerRow: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
   },
-  metricValue: {
-    fontSize: 18,
+  jokerRowCompact: {
+    gap: 6,
+  },
+  jokerRowWrap: {
+    position: 'relative',
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  jokerCard: {
+    width: 62,
+    height: 102,
+    backgroundColor: '#eef3fa',
+    borderRadius: 14,
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#cad9eb',
+    gap: 4,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  emptyJokerCard: {
+    backgroundColor: 'transparent',
+    borderStyle: 'dashed',
+    borderColor: 'rgba(142, 184, 216, 0.35)',
+    justifyContent: 'center',
+  },
+  jokerCardCompact: {
+    width: 56,
+    height: 94,
+    paddingHorizontal: 5,
+    paddingVertical: 7,
+  },
+  jokerCardActive: {
+    borderWidth: 2,
+    shadowOpacity: 0.24,
+    shadowRadius: 8,
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    elevation: 4,
+  },
+  jokerDisabled: {
+    opacity: 0.4,
+  },
+  slotNumber: {
+    fontSize: 10,
+    color: '#62748a',
+    fontWeight: '700',
+  },
+  cardTopRow: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  miniBadge: {
+    minWidth: 18,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: '#d7e6f8',
+    fontSize: 8,
+    fontWeight: '800',
+    color: '#264a74',
+    textAlign: 'center',
+  },
+  cardFrameBorder: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    right: 4,
+    bottom: 4,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.24)',
+  },
+  jokerFrameStripe: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 6,
+    opacity: 0.95,
+  },
+  actionFrameStripe: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 5,
+    opacity: 0.92,
+  },
+  cardFrameSpark: {
+    position: 'absolute',
+    right: -16,
+    top: -18,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+  },
+  jokerTitle: {
+    fontSize: 10,
     fontWeight: '700',
     color: '#0f172a',
+    lineHeight: 13,
+    textAlign: 'center',
   },
-  metricHint: {
-    fontSize: 12,
-    color: '#7b8496',
+  emptyJokerSlot: {
+    width: 32,
+    height: 48,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(142, 184, 216, 0.35)',
   },
-  sectionCard: {
-    backgroundColor: '#ffffff',
+  jokerMeta: {
+    fontSize: 9,
+    color: '#5d6b7c',
+    textAlign: 'center',
+  },
+  cardBottomBadge: {
+    minWidth: 40,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: '#dbe8f6',
+  },
+  jokerGlyph: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#12263d',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOpacity: 0.24,
+    shadowRadius: 8,
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    elevation: 2,
+  },
+  glyphHalo: {
+    position: 'absolute',
+    top: 3,
+    left: 3,
+    right: 3,
+    bottom: 3,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+  },
+  jokerGlyphText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  jokerArtCard: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 14,
+    overflow: 'hidden',
+    justifyContent: 'space-between',
+  },
+  jokerArtImage: {
+    borderRadius: 14,
+    backgroundColor: 'white',
+  },
+  jokerArtOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    // backgroundColor: 'rgba(15, 18, 30, 0.14)',
+  },
+  boardPanel: {
+    flex: 1.18,
+    backgroundColor: '#f3d2d0',
     borderRadius: 18,
-    padding: 16,
+    padding: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#ddb3af',
+    overflow: 'hidden',
+  },
+  boardPanelCompact: {
+    flex: 1.15,
+    padding: 10,
     gap: 8,
   },
-  sectionTitle: {
-    fontSize: 17,
+  boardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+  },
+  boardTitle: {
+    fontSize: 12,
     fontWeight: '700',
-    color: '#0f172a',
+    color: '#8b5b58',
   },
-  sectionValue: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#1e293b',
+  boardFormula: {
+    flex: 1,
+    textAlign: 'right',
+    fontSize: 11,
+    color: '#744949',
   },
-  sectionDescription: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: '#667085',
+  boardGlowOrbA: {
+    position: 'absolute',
+    top: -26,
+    right: -10,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(125, 211, 252, 0.12)',
+  },
+  boardGlowOrbB: {
+    position: 'absolute',
+    bottom: -34,
+    left: -20,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: 'rgba(147, 197, 253, 0.12)',
+  },
+  boardGrid: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    right: 12,
+    bottom: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(191, 219, 254, 0.07)',
   },
   diceRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 10,
+    gap: 8,
   },
   die: {
     flex: 1,
-    minHeight: 64,
-    borderRadius: 16,
-    backgroundColor: '#e9edf7',
+    minHeight: 92,
+    borderRadius: 18,
+    backgroundColor: 'rgba(12, 21, 34, 0.10)',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: 'transparent',
+    borderWidth: 0,
+    shadowColor: '#08101a',
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
+    shadowOffset: {
+      width: 0,
+      height: 6,
+    },
+    elevation: 3,
+  },
+  dieCompact: {
+    minHeight: 80,
+    borderRadius: 16,
   },
   dieSelected: {
-    backgroundColor: '#1d4ed8',
-    borderColor: '#0f172a',
+    backgroundColor: 'rgba(96, 165, 250, 0.12)',
+  },
+  dieFace: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#d9e4ef',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#06131d',
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+  },
+  dieFaceSelected: {
+    backgroundColor: '#ffffff',
+    borderColor: '#7fb3ff',
+  },
+  dieGrid: {
+    width: 30,
+    height: 30,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  dieCell: {
+    width: '33.33%',
+    height: '33.33%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  diePip: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+  },
+  diePipDefault: {
+    backgroundColor: '#13253a',
+  },
+  diePipSelected: {
+    backgroundColor: '#13253a',
   },
   dieValue: {
-    fontSize: 28,
-    fontWeight: '700',
+    fontSize: 32,
+    fontWeight: '800',
     color: '#0f172a',
   },
   dieValueSelected: {
     color: '#ffffff',
   },
-  buttonRow: {
+  notesPanel: {
+    borderRadius: 14,
+    backgroundColor: '#f8fcff',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+  },
+  noteText: {
+    fontSize: 9,
+    lineHeight: 11,
+    color: '#4e7291',
+  },
+  cardPanel: {
+    flex: 0.94,
+    backgroundColor: '#f8fcff',
+    borderRadius: 18,
+    padding: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+    overflow: 'visible',
+  },
+  cardPanelCompact: {
+    flex: 0.84,
+    padding: 10,
+    gap: 8,
+  },
+  cardPanelHeaderActions: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  deckCountsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  cardRefreshButton: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: '#d9efff',
+    borderWidth: 1,
+    borderColor: '#a5cee8',
+  },
+  cardRefreshButtonDisabled: {
+    backgroundColor: '#edf5fb',
+    borderColor: '#ccdfed',
+  },
+  cardRefreshButtonText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#305471',
+  },
+  cardRefreshButtonTextDisabled: {
+    color: '#88a3ba',
+  },
+  deckCounts: {
+    fontSize: 11,
+    color: '#6d91b2',
+    fontWeight: '700',
+  },
+  deckListButton: {
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    backgroundColor: '#d9efff',
+    borderWidth: 1,
+    borderColor: '#a5cee8',
+  },
+  deckListButtonText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#2f5573',
+  },
+  cardRow: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  cardRowDense: {
+    gap: 6,
+  },
+  cardRowWrap: {
+    position: 'relative',
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  cardTooltip: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+    shadowColor: '#6b8aa5',
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    elevation: 4,
+  },
+  cardTooltipFloating: {
+    position: 'absolute',
+    bottom: '100%',
+    marginBottom: 10,
+    zIndex: 5,
+  },
+  jokerTooltip: {
+    borderRadius: 14,
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+    shadowColor: '#6b8aa5',
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    elevation: 4,
+  },
+  jokerTooltipFloating: {
+    position: 'absolute',
+    bottom: '100%',
+    marginBottom: 10,
+    zIndex: 5,
+  },
+  jokerTooltipMeta: {
+    marginTop: 6,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#4e79a0',
+  },
+  jokerTooltipArrow: {
+    position: 'absolute',
+    bottom: -8,
+    left: '50%',
+    marginLeft: -8,
+    width: 16,
+    height: 16,
+    backgroundColor: '#ffffff',
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#bfdcf3',
+    transform: [{ rotate: '45deg' }],
+  },
+  cardTooltipHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     gap: 10,
   },
-  primaryButton: {
+  cardTooltipTitle: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#173450',
+  },
+  cardTooltipBody: {
+    marginTop: 6,
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#4c6f8d',
+  },
+  cardTooltipArrow: {
+    position: 'absolute',
+    bottom: -8,
+    left: '50%',
+    marginLeft: -8,
+    width: 16,
+    height: 16,
+    backgroundColor: '#ffffff',
+    borderLeftWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#bfdcf3',
+    transform: [{ rotate: '-45deg' }],
+  },
+  cardSlot: {
+    flex: 1,
+  },
+  draggingCardSlot: {
+    zIndex: 6,
+  },
+  handCard: {
+    flex: 1,
+    backgroundColor: '#e9eff8',
+    borderRadius: 14,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    gap: 3,
+    borderWidth: 1,
+    borderColor: '#cbd9eb',
+    overflow: 'hidden',
+    position: 'relative',
+    shadowColor: '#06101a',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    elevation: 2,
+  },
+  handCardCompact: {
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+  handCardActive: {
+    borderColor: '#7dd3fc',
+    backgroundColor: '#edf5ff',
+  },
+  handCardDragging: {
+    shadowOpacity: 0.32,
+    shadowRadius: 14,
+    elevation: 6,
+  },
+  emptyCard: {
+    opacity: 0.45,
+  },
+  cardFace: {
+    flex: 1,
+    borderRadius: 12,
+    backgroundColor: '#fcfdff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    paddingVertical: 4,
+    gap: 2,
+    borderWidth: 1,
+    borderColor: '#d8e5f4',
+    overflow: 'hidden',
+  },
+  cardFaceShine: {
+    position: 'absolute',
+    top: 0,
+    left: -6,
+    right: -6,
+    height: 16,
+    backgroundColor: 'rgba(255,255,255,0.5)',
+    borderBottomLeftRadius: 14,
+    borderBottomRightRadius: 14,
+  },
+  cardGlyph: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0d63c9',
+  },
+  handCardTitle: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: '#102033',
+    textAlign: 'center',
+  },
+  bottomBar: {
+    flex: 0.42,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  bottomUseZone: {
+    borderRadius: 16,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: '#4aa6ff',
+    backgroundColor: '#dff1ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  bottomUseZoneWide: {
+    flex: 1,
+  },
+  bottomUseZoneActive: {
+    backgroundColor: '#c9e7ff',
+    borderColor: '#1f82ea',
+  },
+  bottomUseZoneLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#23557e',
+    textAlign: 'center',
+  },
+  bottomButton: {
+    flex: 0.9,
+    borderRadius: 16,
+    backgroundColor: '#f8fcff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+  },
+  wideBottomButton: {
+    flex: 1.2,
+  },
+  bottomButtonText: {
+    color: '#2d526f',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  primaryBottomButton: {
+    backgroundColor: '#1072f1',
+    borderColor: '#6db4ff',
+  },
+  primaryBottomButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(2, 6, 14, 0.72)',
+    justifyContent: 'center',
+    padding: 18,
+  },
+  modalCard: {
+    backgroundColor: '#f7f9fd',
+    borderRadius: 22,
+    padding: 18,
+    gap: 12,
+    maxHeight: '88%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
+  modalIntro: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#526274',
+  },
+  guideList: {
+    gap: 8,
+  },
+  guideRow: {
+    borderRadius: 14,
+    backgroundColor: '#ebf1f8',
+    padding: 10,
+    gap: 2,
+  },
+  guideRank: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#102033',
+  },
+  guideBase: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0d63c9',
+  },
+  guideHint: {
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#516173',
+  },
+  infoCard: {
+    borderRadius: 14,
+    backgroundColor: '#ebf1f8',
+    padding: 12,
+    gap: 4,
+  },
+  infoCardTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#102033',
+  },
+  infoCardBody: {
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#516173',
+  },
+  deckListSectionWrap: {
+    gap: 10,
+  },
+  deckListSection: {
+    borderRadius: 14,
+    backgroundColor: '#ebf1f8',
+    padding: 12,
+    gap: 6,
+  },
+  deckListSectionTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#102033',
+  },
+  deckListItems: {
+    gap: 4,
+  },
+  deckListItem: {
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#516173',
+  },
+  deckListEmpty: {
+    fontSize: 12,
+    color: '#7a8b9c',
+  },
+  overlayList: {
+    gap: 10,
+  },
+  overlayButton: {
+    borderRadius: 16,
+    backgroundColor: '#ebf1f8',
+    padding: 12,
+    gap: 4,
+  },
+  overlayButtonTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#102033',
+  },
+  overlayButtonBody: {
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#526274',
+  },
+  overlayCard: {
+    backgroundColor: '#ebf1f8',
+    borderRadius: 18,
+    padding: 14,
+    gap: 10,
+  },
+  overlayTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#102033',
+  },
+  overlayDescription: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#526274',
+  },
+  largePrimaryButton: {
+    marginTop: 6,
+    borderRadius: 16,
+    backgroundColor: '#1072f1',
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  largePrimaryButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  primaryButton: {
+    backgroundColor: '#1072f1',
     borderRadius: 14,
     paddingVertical: 14,
     paddingHorizontal: 16,
@@ -449,69 +2260,5 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 14,
     fontWeight: '700',
-  },
-  secondaryButton: {
-    flex: 1,
-    backgroundColor: '#e7ecf8',
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-  },
-  secondaryButtonText: {
-    color: '#0f172a',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  previewHeadline: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  noteText: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: '#475467',
-  },
-  listButton: {
-    backgroundColor: '#eef2ff',
-    borderRadius: 14,
-    padding: 14,
-    gap: 4,
-  },
-  listItem: {
-    backgroundColor: '#eef2ff',
-    borderRadius: 14,
-    padding: 14,
-    gap: 4,
-  },
-  disabledItem: {
-    opacity: 0.55,
-  },
-  listButtonTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1e293b',
-  },
-  listButtonBody: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: '#667085',
-  },
-  overlayCard: {
-    backgroundColor: '#111827',
-    borderRadius: 20,
-    padding: 18,
-    gap: 10,
-  },
-  overlayTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  overlayDescription: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: '#d1d5db',
   },
 });

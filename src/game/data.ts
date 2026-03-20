@@ -111,6 +111,7 @@ export const JOKERS: JokerDefinition[] = [
     id: 'six_master',
     name: 'Six Master',
     description: '6이 나올 때마다 배수가 +1 됩니다.',
+    rarity: 'uncommon',
     tags: ['high'],
     trigger: 'beforeScore',
     apply: ctx => {
@@ -130,6 +131,7 @@ export const JOKERS: JokerDefinition[] = [
     id: 'even_power',
     name: 'Even Power',
     description: '모든 점수 주사위가 짝수면 배수가 +2 됩니다.',
+    rarity: 'rare',
     tags: ['even'],
     trigger: 'beforeScore',
     apply: ctx => {
@@ -149,6 +151,7 @@ export const JOKERS: JokerDefinition[] = [
     id: 'triple_boost',
     name: 'Triple Boost',
     description: '트리플 이상 족보면 배수가 +3 됩니다.',
+    rarity: 'rare',
     tags: ['set'],
     trigger: 'beforeScore',
     apply: ctx => {
@@ -167,6 +170,7 @@ export const JOKERS: JokerDefinition[] = [
     id: 'straight_spark',
     name: 'Straight Spark',
     description: '스트레이트면 기본 점수 +20, 배수 +1을 얻습니다.',
+    rarity: 'uncommon',
     tags: ['sequence'],
     trigger: 'beforeScore',
     apply: ctx => {
@@ -186,6 +190,7 @@ export const JOKERS: JokerDefinition[] = [
     id: 'steady_pair',
     name: 'Steady Pair',
     description: '페어 계열 족보면 기본 점수 +12를 얻습니다.',
+    rarity: 'common',
     tags: ['consistency', 'set'],
     trigger: 'beforeScore',
     apply: ctx => {
@@ -204,6 +209,7 @@ export const JOKERS: JokerDefinition[] = [
     id: 'lucky_reroll',
     name: 'Lucky Reroll',
     description: '매 Hand 시작 시 무료 리롤을 1회 얻습니다.',
+    rarity: 'common',
     tags: ['consistency'],
     trigger: 'onHandStart',
     apply: ctx => ({
@@ -213,9 +219,36 @@ export const JOKERS: JokerDefinition[] = [
     }),
   },
   {
+    id: 'full_grip',
+    name: 'Full Grip',
+    description: '매 Hand 시작 시 손패를 1장 더 뽑습니다.',
+    rarity: 'uncommon',
+    tags: ['consistency'],
+    trigger: 'onHandStart',
+    apply: ctx => ({
+      ...ctx,
+      handSizeBonus: ctx.handSizeBonus + 1,
+      notes: [...ctx.notes, 'Full Grip: 시작 손패 +1'],
+    }),
+  },
+  {
+    id: 'fresh_deal',
+    name: 'Fresh Deal',
+    description: '매 Hand 시작 시 손패 교체를 1회 얻습니다.',
+    rarity: 'rare',
+    tags: ['consistency', 'economy'],
+    trigger: 'onHandStart',
+    apply: ctx => ({
+      ...ctx,
+      handRefreshes: ctx.handRefreshes + 1,
+      notes: [...ctx.notes, 'Fresh Deal: 손패 교체 +1'],
+    }),
+  },
+  {
     id: 'golden_touch',
     name: 'Golden Touch',
     description: '이번 Hand 점수가 80 이상이면 골드 +2를 얻습니다.',
+    rarity: 'legendary',
     tags: ['economy'],
     trigger: 'afterScore',
     apply: ctx => {
