@@ -4,6 +4,7 @@ import {
   Easing,
   Image,
   Modal,
+  PanResponder,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -13,10 +14,12 @@ import {
 } from 'react-native';
 
 import { JOKERS } from '../game/data';
+import { getDiceModeImage, type DieMode } from '../game/dicePreviewImages';
 import { getJokerPreviewImage } from '../game/jokerPreviewImages';
 import { JokerDefinition, JokerRarity } from '../game/types';
 
-type DieMode = 'white' | 'black' | 'blue' | 'gold';
+const LOBBY_LOGO = require('../assets/etc/logo.png');
+const JOKER_LIST_BTN = require('../assets/etc/joker-list.png');
 
 const MODE_OPTIONS: Array<{ id: DieMode; title: string; subtitle: string; available: boolean }> = [
   { id: 'white', title: '하얀색 주사위', subtitle: '기본 모드', available: true },
@@ -51,6 +54,31 @@ const ROULETTE_CARD_GAP = 10;
 const ROULETTE_VIEWPORT_WIDTH = ROULETTE_CARD_WIDTH * 3 + ROULETTE_CARD_GAP * 2; // 3장 꽉 차는 폭
 const ROULETTE_STRIDE = ROULETTE_CARD_WIDTH + ROULETTE_CARD_GAP;
 const ROULETTE_TARGET_INDEX = 20;
+const MODE_SWIPE_THRESHOLD_PX = 48;
+const MODE_SIDE_SCALE_TARGET = 0.72;
+const MODE_CAROUSEL_SHIFT_PX = 26;
+
+function ModeTitleVisual({
+  mode,
+  size,
+}: {
+  mode: { id: DieMode; title: string };
+  size: 'center' | 'side';
+}) {
+  const diceImage = getDiceModeImage(mode.id);
+  if (diceImage) {
+    return (
+      <Image
+        source={diceImage}
+        style={size === 'center' ? styles.modeCenterDiceImage : styles.modeSideDiceImage}
+        // resizeMode="contain"
+        resizeMethod='scale'
+        accessibilityLabel={mode.title}
+      />
+    );
+  }
+  return <Text style={size === 'center' ? styles.modeCenterTitle : styles.modeSideTitle}>{mode.title}</Text>;
+}
 
 export function LobbyScreen({
   onStartGame,
@@ -58,6 +86,83 @@ export function LobbyScreen({
   onStartGame: (mode: DieMode, startingJokerId: string) => void;
 }) {
   const [selectedMode, setSelectedMode] = useState<DieMode>('white');
+  const selectedModeRef = useRef(selectedMode);
+  selectedModeRef.current = selectedMode;
+
+  const modeSwipePanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, g) =>
+          Math.abs(g.dx) > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.15,
+        onPanResponderTerminationRequest: () => true,
+        onPanResponderRelease: (_, g) => {
+          const idx = MODE_OPTIONS.findIndex(m => m.id === selectedModeRef.current);
+          if (idx < 0) {
+            return;
+          }
+          if (g.dx <= -MODE_SWIPE_THRESHOLD_PX) {
+            setSelectedMode(MODE_OPTIONS[(idx + 1) % MODE_OPTIONS.length].id);
+          } else if (g.dx >= MODE_SWIPE_THRESHOLD_PX) {
+            setSelectedMode(MODE_OPTIONS[(idx - 1 + MODE_OPTIONS.length) % MODE_OPTIONS.length].id);
+          }
+        },
+      }),
+    [],
+  );
+
+  const modeCarouselShiftX = useRef(new Animated.Value(0)).current;
+  const modeCenterScale = useRef(new Animated.Value(1)).current;
+  const modeSideScale = useRef(new Animated.Value(MODE_SIDE_SCALE_TARGET)).current;
+  const prevModeIndexForAnim = useRef<number | null>(null);
+
+  useEffect(() => {
+    const idx = Math.max(0, MODE_OPTIONS.findIndex(m => m.id === selectedMode));
+    if (prevModeIndexForAnim.current === null) {
+      prevModeIndexForAnim.current = idx;
+      return;
+    }
+    const prev = prevModeIndexForAnim.current;
+    if (prev === idx) {
+      return;
+    }
+    prevModeIndexForAnim.current = idx;
+
+    const len = MODE_OPTIONS.length;
+    let delta = idx - prev;
+    if (delta > len / 2) {
+      delta -= len;
+    }
+    if (delta < -len / 2) {
+      delta += len;
+    }
+
+    const shiftStart = delta > 0 ? -MODE_CAROUSEL_SHIFT_PX : delta < 0 ? MODE_CAROUSEL_SHIFT_PX : 0;
+    modeCarouselShiftX.setValue(shiftStart);
+    modeCenterScale.setValue(0.82);
+    modeSideScale.setValue(0.58);
+
+    Animated.parallel([
+      Animated.spring(modeCarouselShiftX, {
+        toValue: 0,
+        friction: 9,
+        tension: 76,
+        useNativeDriver: true,
+      }),
+      Animated.spring(modeCenterScale, {
+        toValue: 1,
+        friction: 7,
+        tension: 86,
+        useNativeDriver: true,
+      }),
+      Animated.spring(modeSideScale, {
+        toValue: MODE_SIDE_SCALE_TARGET,
+        friction: 8,
+        tension: 88,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [selectedMode]);
+
   const [showJokerGuide, setShowJokerGuide] = useState(false);
   const [selectedJokerId, setSelectedJokerId] = useState<string>(JOKERS[0]?.id ?? 'lucky_reroll');
   const [showStartReveal, setShowStartReveal] = useState(false);
@@ -75,7 +180,6 @@ export function LobbyScreen({
   const startOverlayOpacity = useRef(new Animated.Value(0)).current;
   const startOverlayBackdropOpacity = useRef(new Animated.Value(0)).current;
   // 흔들림/이동 없이 가운데에서 "커졌다가 사라지는" 연출만
-  const startOverlayNameOpacity = useRef(new Animated.Value(0)).current;
   const didAutoStartRef = useRef(false);
 
   const selectedJoker = useMemo(
@@ -160,7 +264,6 @@ export function LobbyScreen({
     startOverlayScale.setValue(0.6);
     startOverlayOpacity.setValue(0);
     startOverlayBackdropOpacity.setValue(0);
-    startOverlayNameOpacity.setValue(0);
 
     Animated.sequence([
       Animated.parallel([
@@ -191,12 +294,6 @@ export function LobbyScreen({
           useNativeDriver: true,
         }),
       ]),
-      Animated.timing(startOverlayNameOpacity, {
-        toValue: 1,
-        duration: 180,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
       Animated.delay(900), // 1.5~2초 느낌(확대 + 이름 노출)
     ]).start(() => {
       Animated.parallel([
@@ -207,12 +304,6 @@ export function LobbyScreen({
           useNativeDriver: true,
         }),
         Animated.timing(startOverlayOpacity, {
-          toValue: 0,
-          duration: 320,
-          easing: Easing.inOut(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.timing(startOverlayNameOpacity, {
           toValue: 0,
           duration: 320,
           easing: Easing.inOut(Easing.cubic),
@@ -267,43 +358,122 @@ export function LobbyScreen({
     return () => clearTimeout(t);
   }, [showStartReveal, showRouletteResult, showStartOverlay, isStartingTransition, revealedStartJokerId]);
 
+  const modeIndex = Math.max(
+    0,
+    MODE_OPTIONS.findIndex(m => m.id === selectedMode),
+  );
+  const leftMode = MODE_OPTIONS[(modeIndex - 1 + MODE_OPTIONS.length) % MODE_OPTIONS.length];
+  const rightMode = MODE_OPTIONS[(modeIndex + 1) % MODE_OPTIONS.length];
+  const selectedModeOption = MODE_OPTIONS[modeIndex];
+
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.screen}>
-        <View style={styles.topBar}>
-          <View>
-            <Text style={styles.title}>RogueRoll Lobby</Text>
-            <Text style={styles.subtitle}>모드를 고르고 런을 시작하세요.</Text>
-          </View>
-          <Pressable onPress={() => setShowJokerGuide(true)} style={styles.jokerGuideButton}>
-            <Text style={styles.jokerGuideButtonText}>🃏</Text>
-          </Pressable>
-        </View>
+      <View style={styles.frameOuter}>
+        <View style={styles.framePanel}>
+          <View style={styles.frameContent}>
+            <View style={styles.frameHeader}>
+              <Image
+                source={LOBBY_LOGO}
+                style={styles.lobbyLogo}
+                resizeMode="contain"
+                accessibilityLabel="Joker Dice"
+              />
+            </View>
 
-        <View style={styles.modeList}>
-          {MODE_OPTIONS.map(mode => {
-            const isSelected = selectedMode === mode.id;
-            return (
-              <Pressable
-                key={mode.id}
-                disabled={!mode.available}
-                onPress={() => setSelectedMode(mode.id)}
+            <View style={styles.frameMiddle}>
+              <View style={styles.modeCarouselWrap}>
+          <Animated.View
+            style={[
+              styles.modeCarouselRow,
+              { transform: [{ translateX: modeCarouselShiftX }] },
+            ]}
+            collapsable={false}
+            {...modeSwipePanResponder.panHandlers}>
+            <Pressable onPress={() => setSelectedMode(leftMode.id)} style={styles.modeSideCard}>
+              <Animated.View
                 style={[
-                  styles.modeCard,
-                  isSelected ? styles.modeCardSelected : undefined,
-                  !mode.available ? styles.modeCardDisabled : undefined,
+                  styles.modeSideCardInner,
+                  {
+                    opacity: leftMode.available ? 0.75 : 0.45,
+                    transform: [{ scale: modeSideScale }],
+                  },
                 ]}>
-                <Text style={styles.modeTitle}>{mode.title}</Text>
-                <Text style={styles.modeSubtitle}>{mode.subtitle}</Text>
-                {!mode.available ? <Text style={styles.modeSoon}>Coming Soon</Text> : null}
-              </Pressable>
-            );
-          })}
-        </View>
+                <ModeTitleVisual mode={leftMode} size="side" />
+              </Animated.View>
+            </Pressable>
 
-        <Pressable onPress={handleStartRun} style={styles.startButton} disabled={isStarting}>
-          <Text style={styles.startButtonText}>게임 시작</Text>
-        </Pressable>
+            <Pressable
+              onPress={() => setSelectedMode(selectedMode)}
+              style={[
+                styles.modeCenterCard,
+                !selectedModeOption.available ? styles.modeCenterCardLocked : undefined,
+              ]}>
+              <Animated.View
+                style={[styles.modeCenterCardInner, { transform: [{ scale: modeCenterScale }] }]}>
+                <ModeTitleVisual mode={MODE_OPTIONS[modeIndex]} size="center" />
+              </Animated.View>
+            </Pressable>
+
+            <Pressable onPress={() => setSelectedMode(rightMode.id)} style={styles.modeSideCard}>
+              <Animated.View
+                style={[
+                  styles.modeSideCardInner,
+                  {
+                    opacity: rightMode.available ? 0.75 : 0.45,
+                    transform: [{ scale: modeSideScale }],
+                  },
+                ]}>
+                <ModeTitleVisual mode={rightMode} size="side" />
+              </Animated.View>
+            </Pressable>
+          </Animated.View>
+
+          <View style={styles.modeNavStrip}>
+            <View style={styles.modeNavPill}>
+              <Pressable
+                onPress={() => setSelectedMode(leftMode.id)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 6 }}
+                style={({ pressed }) => [styles.modeNavPillHit, pressed && styles.modeNavPillHitPressed]}>
+                <Text style={styles.modeNavPillArrow}>‹</Text>
+              </Pressable>
+              <View style={styles.modeNavPillLabelWrap}>
+                <Text style={styles.modeNavPillLabel} numberOfLines={1}>
+                  {MODE_OPTIONS[modeIndex].subtitle}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => setSelectedMode(rightMode.id)}
+                hitSlop={{ top: 10, bottom: 10, left: 6, right: 10 }}
+                style={({ pressed }) => [styles.modeNavPillHit, pressed && styles.modeNavPillHitPressed]}>
+                <Text style={styles.modeNavPillArrow}>›</Text>
+              </Pressable>
+            </View>
+          </View>
+            </View>
+            </View>
+
+            <View style={styles.frameFooter}>
+              <View style={styles.frameFooterTopRow}>
+                <Pressable
+                  onPress={() => setShowJokerGuide(true)}
+                  style={({ pressed }) => [
+                    styles.jokerListButton,
+                    pressed && styles.jokerListButtonPressed,
+                  ]}
+                  hitSlop={10}
+                  accessibilityLabel="조커 목록">
+                  <Image source={JOKER_LIST_BTN} style={styles.jokerListButtonImage} resizeMode="contain" />
+                </Pressable>
+              </View>
+              <Pressable
+                onPress={handleStartRun}
+                style={[styles.startButton, !selectedModeOption.available ? styles.startButtonDisabled : undefined]}
+                disabled={isStarting || !selectedModeOption.available}>
+                <Text style={styles.startButtonText}>게임 시작</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
       </View>
 
       {showStartOverlay ? (
@@ -329,11 +499,6 @@ export function LobbyScreen({
             ) : (
               <View style={styles.startOverlayPlaceholder} />
             )}
-            <Animated.View style={{ opacity: startOverlayNameOpacity }}>
-              <Text style={[styles.startOverlayName, { color: revealedStartJokerRarityColors.border }]}>
-                {revealedStartJoker?.name ?? '랜덤 조커'}
-              </Text>
-            </Animated.View>
           </Animated.View>
         </Animated.View>
       ) : null}
@@ -392,47 +557,7 @@ export function LobbyScreen({
               />
             </View>
 
-            <View
-              style={[
-                styles.revealResultWrap,
-                {
-                  borderColor: revealedStartJokerRarityColors.border,
-                  backgroundColor: revealedStartJokerRarityColors.glow,
-                },
-              ]}>
-              {showRouletteResult ? (
-                <>
-                  <Text
-                    style={[
-                      styles.revealResultSub,
-                      { color: revealedStartJokerRarityColors.border },
-                    ]}>
-                    {revealedStartJoker?.rarity === 'legendary' ? '★ ' : ''}
-                    {JOKER_RARITY_LABELS[revealedStartJoker?.rarity ?? 'common']}
-                  </Text>
-                  <Text style={[styles.revealResultName, { color: revealedStartJokerRarityColors.border }]}>
-                    {revealedStartJoker?.name ?? '랜덤 조커'}
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Text style={[styles.revealResultSub, { color: '#5f7f9a' }]}>등급…</Text>
-                  <Text style={styles.revealResultNamePlaceholder}>이름…</Text>
-                </>
-              )}
-            </View>
-            {showRouletteResult ? (
-              <View style={styles.revealActionRow}>
-                <Pressable onPress={() => setShowStartReveal(false)} style={styles.revealSecondaryButton}>
-                  <Text style={styles.revealSecondaryButtonText}>닫기</Text>
-                </Pressable>
-                <Pressable
-                  onPress={handleConfirmStart}
-                  style={styles.revealPrimaryButton}>
-                  <Text style={styles.revealPrimaryButtonText}>이 조커로 시작</Text>
-                </Pressable>
-              </View>
-            ) : null}
+            {/* 등급/이름 UI는 빼고, 중앙 캐러셀만 보여줍니다. */}
           </View>
         </View>
       </Modal>
@@ -559,40 +684,72 @@ export function LobbyScreen({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#eaf7ff',
+    backgroundColor: '#ffffff',
   },
-  screen: {
+  frameOuter: {
     flex: 1,
-    padding: 16,
-    gap: 14,
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
   },
-  topBar: {
+  framePanel: {
+    width: '95%',
+    height: '100%',
+    alignSelf: 'center',
+    borderRadius: 4,
+    overflow: 'hidden',
+    backgroundColor: '#ffffff',
+  },
+  frameContent: {
+    flex: 1,
+    width: '100%',
+    paddingHorizontal: '4.5%',
+    // paddingTop: '4.5%',
+    paddingBottom: '4%',
+  },
+  frameHeader: {
+    alignItems: 'center',
+    paddingTop: 20,
+    flexShrink: 0,
+    // backgroundColor: 'red',
+  },
+  lobbyLogo: {
+    width: '100%',
+    // backgroundColor: 'red',
+    maxWidth: 280,
+    height: 240,
+  },
+  frameMiddle: {
+    flex: 1,
+    // justifyContent: 'center',
+    minHeight: 120,
+    // backgroundColor: 'blue',
+  },
+  frameFooter: {
+    gap: 8,
+    paddingTop: 4,
+    flexShrink: 0,
+  },
+  frameFooterTopRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
   },
-  title: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#173450',
-  },
-  subtitle: {
-    marginTop: 4,
-    fontSize: 13,
-    color: '#5f7f9a',
-  },
-  jokerGuideButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#d9efff',
-    borderWidth: 1,
-    borderColor: '#a9cee8',
+  jokerListButton: {
+    width: 54,
+    height: 54,
+    borderRadius: 16,
+    backgroundColor: 'rgba(15, 23, 42, 0.06)',
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderColor: 'rgba(245, 158, 11, 0.55)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  jokerGuideButtonText: {
-    fontSize: 22,
+  jokerListButtonPressed: {
+    backgroundColor: 'rgba(15, 23, 42, 0.12)',
+  },
+  jokerListButtonImage: {
+    width: 40,
+    height: 40,
   },
   modeList: {
     gap: 10,
@@ -627,13 +784,123 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#8da7bb',
   },
+  modeCarouselWrap: {
+    position: 'relative',
+    // marginTop: 6,
+  },
+  modeCarouselRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    gap: 70,
+    zIndex: 1,
+    overflow: 'visible',
+  },
+  modeSideCard: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modeSideCardInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modeSideTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#173450',
+    textAlign: 'center',
+  },
+  modeCenterCard: {
+    flex: 1.1,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modeCenterCardInner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modeCenterCardLocked: {
+    opacity: 0.92,
+  },
+  modeCenterTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#173450',
+  },
+  modeCenterDiceImage: {
+    width: 230,
+    height: 200,
+  },
+  modeSideDiceImage: {
+    width: 130,
+    height: 100,
+  },
+  modeNavStrip: {
+    alignItems: 'center',
+    marginTop: 6,
+    paddingHorizontal: 12,
+  },
+  modeNavPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 999,
+    backgroundColor: 'rgba(255, 255, 255, 0.78)',
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderColor: 'rgba(96, 165, 250, 0.42)',
+    shadowColor: '#1d4ed8',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 5,
+    overflow: 'hidden',
+  },
+  modeNavPillHit: {
+    width: 46,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modeNavPillHitPressed: {
+    backgroundColor: 'rgba(147, 197, 253, 0.38)',
+  },
+  modeNavPillLabelWrap: {
+    paddingHorizontal: 20,
+    paddingVertical: 11,
+    minWidth: 112,
+    maxWidth: 240,
+    alignItems: 'center',
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(96, 165, 250, 0.28)',
+  },
+  modeNavPillLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#3d5a73',
+    letterSpacing: 0.35,
+    textAlign: 'center',
+  },
+  modeNavPillArrow: {
+    fontSize: 28,
+    fontWeight: '200',
+    color: '#1e4f8c',
+    marginTop: -3,
+  },
   startButton: {
-    marginTop: 'auto',
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#1072f1',
+  },
+  startButtonDisabled: {
+    opacity: 0.45,
   },
   startButtonText: {
     color: '#ffffff',
