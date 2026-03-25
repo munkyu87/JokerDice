@@ -19,7 +19,8 @@ import { getJokerPreviewImage } from '../game/jokerPreviewImages';
 import { JokerDefinition, JokerRarity } from '../game/types';
 
 const LOBBY_LOGO = require('../assets/etc/logo.png');
-const JOKER_LIST_BTN = require('../assets/etc/joker-list.png');
+const JOKER_LIST_BTN = require('../assets/etc/joker-card-list.png');
+const START_BUTTON_IMG = require('../assets/etc/start.png');
 
 const MODE_OPTIONS: Array<{ id: DieMode; title: string; subtitle: string; available: boolean }> = [
   { id: 'white', title: '하얀색 주사위', subtitle: '기본 모드', available: true },
@@ -429,25 +430,9 @@ export function LobbyScreen({
           </Animated.View>
 
           <View style={styles.modeNavStrip}>
-            <View style={styles.modeNavPill}>
-              <Pressable
-                onPress={() => setSelectedMode(leftMode.id)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 6 }}
-                style={({ pressed }) => [styles.modeNavPillHit, pressed && styles.modeNavPillHitPressed]}>
-                <Text style={styles.modeNavPillArrow}>‹</Text>
-              </Pressable>
-              <View style={styles.modeNavPillLabelWrap}>
-                <Text style={styles.modeNavPillLabel} numberOfLines={1}>
-                  {MODE_OPTIONS[modeIndex].subtitle}
-                </Text>
-              </View>
-              <Pressable
-                onPress={() => setSelectedMode(rightMode.id)}
-                hitSlop={{ top: 10, bottom: 10, left: 6, right: 10 }}
-                style={({ pressed }) => [styles.modeNavPillHit, pressed && styles.modeNavPillHitPressed]}>
-                <Text style={styles.modeNavPillArrow}>›</Text>
-              </Pressable>
-            </View>
+            <Text style={styles.modeNavPillLabel} numberOfLines={1}>
+              {MODE_OPTIONS[modeIndex].subtitle}
+            </Text>
           </View>
             </View>
             </View>
@@ -457,19 +442,26 @@ export function LobbyScreen({
                 <Pressable
                   onPress={() => setShowJokerGuide(true)}
                   style={({ pressed }) => [
-                    styles.jokerListButton,
-                    pressed && styles.jokerListButtonPressed,
+                    styles.jokerListButton
+                    // pressed && styles.jokerListButtonPressed,
                   ]}
                   hitSlop={10}
                   accessibilityLabel="조커 목록">
-                  <Image source={JOKER_LIST_BTN} style={styles.jokerListButtonImage} resizeMode="contain" />
+                  <Image source={JOKER_LIST_BTN} style={styles.jokerListButtonImage} />
                 </Pressable>
               </View>
               <Pressable
                 onPress={handleStartRun}
                 style={[styles.startButton, !selectedModeOption.available ? styles.startButtonDisabled : undefined]}
-                disabled={isStarting || !selectedModeOption.available}>
-                <Text style={styles.startButtonText}>게임 시작</Text>
+                disabled={isStarting || !selectedModeOption.available}
+                accessibilityLabel="게임 시작"
+                accessibilityRole="button">
+                <Image
+                  source={START_BUTTON_IMG}
+                  style={styles.startButtonImage}
+                  // resizeMode="contain"
+                  // resizeMethod='scale'
+                />
               </Pressable>
             </View>
           </View>
@@ -735,12 +727,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   jokerListButton: {
-    width: 54,
-    height: 54,
-    borderRadius: 16,
-    backgroundColor: 'rgba(15, 23, 42, 0.06)',
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    borderColor: 'rgba(245, 158, 11, 0.55)',
+    // width: 40,
+    height: 60,
+    // backgroundColor: 'red',
+    // paddingTop: 20,
+    marginRight: 10,
+    // borderRadius: 16,
+    // backgroundColor: 'rgba(15, 23, 42, 0.06)',
+    // backgroundColor: 'red',
+    // borderWidth: StyleSheet.hairlineWidth * 2,
+    // borderColor: 'rgba(245, 158, 11, 0.55)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -748,8 +744,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.12)',
   },
   jokerListButtonImage: {
-    width: 40,
-    height: 40,
+    width: 70,
+    height: 85,
+    // backgroundColor: 'red',
   },
   modeList: {
     gap: 10,
@@ -843,7 +840,7 @@ const styles = StyleSheet.create({
   },
   modeNavStrip: {
     alignItems: 'center',
-    marginTop: 6,
+    // marginTop: 6,
     paddingHorizontal: 12,
   },
   modeNavPill: {
@@ -880,7 +877,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(96, 165, 250, 0.28)',
   },
   modeNavPillLabel: {
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: '800',
     color: '#3d5a73',
     letterSpacing: 0.35,
@@ -893,19 +890,20 @@ const styles = StyleSheet.create({
     marginTop: -3,
   },
   startButton: {
-    borderRadius: 14,
-    paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1072f1',
+    marginBottom: 70,
+    alignSelf: 'stretch',
+    backgroundColor: 'transparent',
   },
   startButtonDisabled: {
     opacity: 0.45,
   },
-  startButtonText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '800',
+  startButtonImage: {
+    width: '75%',
+    // maxWidth: 400,
+    // backgroundColor: 'red',
+    height: 100,
   },
   startOverlayBackdrop: {
     position: 'absolute',
