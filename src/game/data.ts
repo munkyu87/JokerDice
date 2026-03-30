@@ -304,6 +304,25 @@ export const JOKERS: JokerDefinition[] = [
       };
     },
   },
+  {
+    id: 'gap_draw',
+    name: 'Gap Fill',
+    description:
+      'Hand 점수를 확정할 때마다 손패에 빈 슬롯이 있으면 덱에서 카드를 1장 뽑습니다. (덱·버림패에 남아 있을 때)',
+    rarity: 'legendary',
+    tags: ['consistency', 'economy'],
+    trigger: 'afterScore',
+    apply: ctx => ctx,
+  },
+  {
+    id: 'shop_6_slot',
+    name: 'Market Expansion',
+    description: '상점에서 아이템 슬롯이 최대 6개까지 증가합니다.',
+    rarity: 'rare',
+    tags: ['economy'],
+    trigger: 'onHandStart',
+    apply: ctx => ctx,
+  },
 ];
 
 export const BOSSES: BossDefinition[] = [

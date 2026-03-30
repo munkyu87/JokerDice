@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Animated,
   Easing,
+  Image,
   ImageBackground,
   Modal,
   PanResponder,
@@ -16,6 +17,8 @@ import {
 } from 'react-native';
 
 import { getActionCard, getJoker } from '../game/engine';
+import { getActionCardPreviewImage } from '../game/actionCardPreviewImages';
+import { getJokerPreviewImage } from '../game/jokerPreviewImages';
 import { useRogueRollGame } from '../game/useRogueRollGame';
 import { DiceValue, HandRank, JokerRarity } from '../game/types';
 
@@ -96,8 +99,7 @@ const JOKER_THEME = {
   economy: { frame: '#eab308', surface: '#2e260d', accent: '#fde047', badge: '#4e4212' },
   consistency: { frame: '#38bdf8', surface: '#102535', accent: '#7dd3fc', badge: '#1a3850' },
 } as const;
-
-const LUCKY_REROLL_IMAGE = require('../assets/jokers/lucky-reroll.png');
+const DICE_ROLL_DURATION_MS = 400;
 
 const getPrimaryTag = (tags: Array<keyof typeof TAG_LABELS> | undefined) =>
   tags?.[0] ?? 'consistency';
@@ -193,6 +195,10 @@ export function RogueRollScreen({
   const [showDeckList, setShowDeckList] = useState(false);
   const [selectedCardIndex, setSelectedCardIndex] = useState<number | null>(null);
   const [selectedJokerIndex, setSelectedJokerIndex] = useState<number | null>(null);
+  const [selectedRewardId, setSelectedRewardId] = useState<string | null>(null);
+  const [rewardTooltipId, setRewardTooltipId] = useState<string | null>(null);
+  const [selectedShopItemId, setSelectedShopItemId] = useState<string | null>(null);
+  const [shopTooltipId, setShopTooltipId] = useState<string | null>(null);
   const [draggingCardIndex, setDraggingCardIndex] = useState<number | null>(null);
   const [isDraggingOverUseZone, setIsDraggingOverUseZone] = useState(false);
   const [useZoneRect, setUseZoneRect] = useState<{
@@ -236,9 +242,6 @@ export function RogueRollScreen({
   const useZoneRef = useRef<View | null>(null);
   const previousDiceRef = useRef(state.hand.dice);
   const mountedRef = useRef(false);
-  const intervalRefs = useRef<Array<ReturnType<typeof setInterval> | null>>(
-    state.hand.dice.map(() => null),
-  );
   const timeoutRefs = useRef<Array<ReturnType<typeof setTimeout> | null>>(
     state.hand.dice.map(() => null),
   );
@@ -268,6 +271,15 @@ export function RogueRollScreen({
   const selectedJokerId =
     selectedJokerIndex !== null ? state.jokers[selectedJokerIndex] : undefined;
   const selectedJoker = selectedJokerId ? getJoker(selectedJokerId) : undefined;
+  const selectedRewardOption =
+    state.phase === 'reward'
+      ? state.rewardOptions.find(option => option.id === selectedRewardId) ?? null
+      : null;
+  const selectedShopItem =
+    state.phase === 'shop'
+      ? state.shopItems.find(item => item.id === selectedShopItemId) ?? null
+      : null;
+  const canBuySelectedShopItem = !!selectedShopItem && state.gold >= selectedShopItem.price;
   const jokerSlotCount = Math.max(5, state.jokers.length);
   const blindTypeLabel = stageDefinition.name;
   const blindRuleText = boss ? boss.description : undefined;
@@ -321,6 +333,26 @@ export function RogueRollScreen({
     ],
     [state.deck.discardPile, state.deck.drawPile, state.deck.hand],
   );
+
+  useEffect(() => {
+    if (state.phase !== 'reward') {
+      setSelectedRewardId(null);
+      setRewardTooltipId(null);
+      return;
+    }
+    if (!selectedRewardId && state.rewardOptions.length > 0) {
+      setSelectedRewardId(state.rewardOptions[0].id);
+    }
+  }, [state.phase, state.rewardOptions, selectedRewardId]);
+
+  useEffect(() => {
+    if (state.phase !== 'shop') {
+      setSelectedShopItemId(null);
+      setShopTooltipId(null);
+      return;
+    }
+    setSelectedShopItemId(state.shopItems[0]?.id ?? null);
+  }, [state.phase, state.shopItems]);
 
   while (cardSelectAnimationsRef.current.length < visibleCardSlotCount) {
     cardSelectAnimationsRef.current.push(new Animated.Value(0));
@@ -394,15 +426,9 @@ export function RogueRollScreen({
   }, [draggingCardIndex, state.deck.hand.length]);
 
   useEffect(() => {
-    const intervals = intervalRefs.current;
     const timeouts = timeoutRefs.current;
 
     return () => {
-      intervals.forEach(timer => {
-        if (timer) {
-          clearInterval(timer);
-        }
-      });
       timeouts.forEach(timer => {
         if (timer) {
           clearTimeout(timer);
@@ -435,10 +461,6 @@ export function RogueRollScreen({
       const animation = diceAnimationsRef.current[index];
       const finalValue = state.hand.dice[index];
 
-      if (intervalRefs.current[index]) {
-        clearInterval(intervalRefs.current[index]!);
-      }
-
       if (timeoutRefs.current[index]) {
         clearTimeout(timeoutRefs.current[index]!);
       }
@@ -446,34 +468,32 @@ export function RogueRollScreen({
       animation.stopAnimation();
       animation.setValue(0);
 
-      intervalRefs.current[index] = setInterval(() => {
+      // 회전 중간(50%)에 숫자를 한 번 랜덤 변경해 슬롯머신 느낌을 냅니다.
+      timeoutRefs.current[index] = setTimeout(() => {
         setDisplayDice(currentDice => {
           const nextDice = [...currentDice];
           nextDice[index] = (Math.floor(Math.random() * 6) + 1) as DiceValue;
           return nextDice as typeof currentDice;
         });
-      }, 75);
+      }, DICE_ROLL_DURATION_MS / 2);
 
       Animated.timing(animation, {
         toValue: 1,
-        duration: 360,
-        easing: Easing.out(Easing.cubic),
+        duration: DICE_ROLL_DURATION_MS,
+        easing: Easing.linear,
         useNativeDriver: true,
       }).start(() => {
-        animation.setValue(0);
-      });
-
-      timeoutRefs.current[index] = setTimeout(() => {
-        if (intervalRefs.current[index]) {
-          clearInterval(intervalRefs.current[index]!);
+        if (timeoutRefs.current[index]) {
+          clearTimeout(timeoutRefs.current[index]!);
+          timeoutRefs.current[index] = null;
         }
-
         setDisplayDice(currentDice => {
           const nextDice = [...currentDice];
           nextDice[index] = finalValue;
           return nextDice as typeof currentDice;
         });
-      }, 360);
+        animation.setValue(0);
+      });
     });
 
     previousDiceRef.current = state.hand.dice;
@@ -722,6 +742,7 @@ export function RogueRollScreen({
               const theme = getJokerTheme(joker?.tags);
               const rarityTheme = joker ? JOKER_RARITY_COLORS[joker.rarity] : undefined;
               const badgeLabel = joker ? TAG_LABELS[getPrimaryTag(joker.tags)] : 'EMPTY';
+              const jokerPreviewImage = joker ? getJokerPreviewImage(joker.id) : undefined;
               const animation = jokerSelectAnimationsRef.current[slotIndex];
               const animatedStyle = {
                 transform: [
@@ -762,9 +783,9 @@ export function RogueRollScreen({
                     ]}>
                     {joker ? (
                       <>
-                        {joker.id === 'lucky_reroll' ? (
+                        {jokerPreviewImage ? (
                           <ImageBackground
-                            source={LUCKY_REROLL_IMAGE}
+                            source={jokerPreviewImage}
                             imageStyle={styles.jokerArtImage}
                             resizeMode="cover"
                             style={styles.jokerArtCard}>
@@ -828,37 +849,37 @@ export function RogueRollScreen({
             </Text>
           </View>
 
-          <View style={styles.statusBanner}>
-            <Text numberOfLines={1} style={styles.statusBannerText}>
-              {state.message}
-            </Text>
-          </View>
+          {state.phase !== 'playing' ? (
+            <View style={styles.statusBanner}>
+              <Text numberOfLines={1} style={styles.statusBannerText}>
+                {state.message}
+              </Text>
+            </View>
+          ) : null}
 
           <View style={styles.diceRow}>
             {displayDice.map((value, index) => {
               const isSelected = state.hand.selectedDice.includes(index);
               const animation = diceAnimationsRef.current[index];
               const selectAnimation = diceSelectAnimationsRef.current[index];
-              const animatedStyle = {
+              const rollAnimatedStyle = {
                 transform: [
                   {
                     rotate: animation.interpolate({
                       inputRange: [0, 1],
-                      outputRange: ['0deg', '360deg'],
+                      outputRange: ['0deg', '540deg'],
                     }),
                   },
                   {
                     scale: animation.interpolate({
                       inputRange: [0, 0.5, 1],
-                      outputRange: [1, 1.06, 1],
+                      outputRange: [1, 1.1, 1],
                     }),
                   },
-                  {
-                    translateY: animation.interpolate({
-                      inputRange: [0, 0.5, 1],
-                      outputRange: [0, -4, 0],
-                    }),
-                  },
+                ],
+              };
+              const selectAnimatedStyle = {
+                transform: [
                   {
                     translateY: selectAnimation.interpolate({
                       inputRange: [0, 1],
@@ -868,29 +889,31 @@ export function RogueRollScreen({
                   {
                     scale: selectAnimation.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [1, 1.05],
+                      outputRange: [1, 1.04],
                     }),
                   },
                 ],
               };
 
               return (
-                <Animated.View key={`die-${index}`} style={animatedStyle}>
-                  <Pressable
-                    onPress={() => toggleDie(index)}
-                    style={[
-                      styles.die,
-                      isCompact ? styles.dieCompact : undefined,
-                      isSelected ? styles.dieSelected : undefined,
-                    ]}>
-                    <DieFace value={value} selected={isSelected} />
-                  </Pressable>
+                <Animated.View key={`die-${index}`} style={selectAnimatedStyle}>
+                  <Animated.View style={rollAnimatedStyle}>
+                    <Pressable
+                      onPress={() => toggleDie(index)}
+                      style={[
+                        styles.die,
+                        isCompact ? styles.dieCompact : undefined,
+                        isSelected ? styles.dieSelected : undefined,
+                      ]}>
+                      <DieFace value={value} selected={isSelected} />
+                    </Pressable>
+                  </Animated.View>
                 </Animated.View>
               );
             })}
           </View>
 
-          {previewScore.notes.length > 0 ? (
+          {state.phase !== 'playing' && previewScore.notes.length > 0 ? (
             <View style={styles.notesPanel}>
               {previewScore.notes.slice(0, 1).map(note => (
                 <Text key={note} numberOfLines={1} style={styles.noteText}>
@@ -962,6 +985,7 @@ export function RogueRollScreen({
             {Array.from({ length: visibleCardSlotCount }, (_, index) => {
               const cardId = state.deck.hand[index];
               const card = cardId ? getActionCard(cardId) : undefined;
+              const actionPreviewImage = card ? getActionCardPreviewImage(card.id) : undefined;
               const isPreviewing = selectedCardIndex === index;
               const theme = getActionTheme(card?.tags);
               const badgeLabel = card ? TAG_LABELS[getPrimaryTag(card.tags)] : 'A';
@@ -1025,31 +1049,58 @@ export function RogueRollScreen({
                       isDragging ? styles.handCardDragging : undefined,
                       !card ? styles.emptyCard : undefined,
                     ]}>
-                    <View pointerEvents="none" style={styles.cardFrameBorder} />
-                    <View
-                      pointerEvents="none"
-                      style={[styles.actionFrameStripe, card ? { backgroundColor: theme.frame } : undefined]}
-                    />
-                    <View pointerEvents="none" style={styles.cardFrameSpark} />
-                    <View style={styles.cardTopRow}>
-                      <Text
-                        style={[styles.miniBadge, card ? { backgroundColor: theme.badge, color: theme.accent } : undefined]}>
-                        {badgeLabel}
-                      </Text>
-                    </View>
-                    <View
-                      style={[
-                        styles.cardFace,
-                        card ? { borderColor: theme.frame } : undefined,
-                      ]}>
-                      <View pointerEvents="none" style={styles.cardFaceShine} />
-                      <Text style={[styles.cardGlyph, card ? { color: theme.accent } : undefined]}>
-                        {card ? card.name.slice(0, 1) : '?'}
-                      </Text>
-                      <Text numberOfLines={1} style={styles.handCardTitle}>
-                        {card ? card.name : 'EMPTY'}
-                      </Text>
-                    </View>
+                    {actionPreviewImage ? (
+                      <ImageBackground
+                        source={actionPreviewImage}
+                        imageStyle={styles.handCardArtImage}
+                        resizeMode="cover"
+                        style={styles.handCardArtCard}>
+                        <View pointerEvents="none" style={styles.handCardArtOverlay} />
+                        <View style={styles.cardTopRow}>
+                          <Text
+                            style={[
+                              styles.miniBadge,
+                              styles.handCardMiniBadgeOnImage,
+                              card ? { backgroundColor: theme.badge, color: theme.accent } : undefined,
+                            ]}>
+                            {badgeLabel}
+                          </Text>
+                        </View>
+                        <View style={styles.handCardFooterOnImage}>
+                          <Text numberOfLines={1} style={styles.handCardTitleOnImage}>
+                            {card ? card.name : 'EMPTY'}
+                          </Text>
+                        </View>
+                      </ImageBackground>
+                    ) : (
+                      <>
+                        <View pointerEvents="none" style={styles.cardFrameBorder} />
+                        <View
+                          pointerEvents="none"
+                          style={[styles.actionFrameStripe, card ? { backgroundColor: theme.frame } : undefined]}
+                        />
+                        <View pointerEvents="none" style={styles.cardFrameSpark} />
+                        <View style={styles.cardTopRow}>
+                          <Text
+                            style={[styles.miniBadge, card ? { backgroundColor: theme.badge, color: theme.accent } : undefined]}>
+                            {badgeLabel}
+                          </Text>
+                        </View>
+                        <View
+                          style={[
+                            styles.cardFace,
+                            card ? { borderColor: theme.frame } : undefined,
+                          ]}>
+                          <View pointerEvents="none" style={styles.cardFaceShine} />
+                          <Text style={[styles.cardGlyph, card ? { color: theme.accent } : undefined]}>
+                            {card ? card.name.slice(0, 1) : '?'}
+                          </Text>
+                          <Text numberOfLines={1} style={styles.handCardTitle}>
+                            {card ? card.name : 'EMPTY'}
+                          </Text>
+                        </View>
+                      </>
+                    )}
                   </Pressable>
                 </Animated.View>
               );
@@ -1162,30 +1213,201 @@ export function RogueRollScreen({
           {state.phase === 'reward' ? (
             <View style={styles.overlayList}>
               <Text style={styles.modalIntro}>세 가지 중 하나를 골라 다음 블라인드용 빌드를 만드세요.</Text>
-              {state.rewardOptions.map(option => (
-                <Pressable key={option.id} onPress={() => applyReward(option)} style={styles.overlayButton}>
-                  <Text style={styles.overlayButtonTitle}>{option.title}</Text>
-                  <Text numberOfLines={2} style={styles.overlayButtonBody}>
-                    {option.description}
+              <View style={styles.overlayGoldBar}>
+                <Text style={styles.overlayGoldLabel}>보유 골드</Text>
+                <Text style={styles.overlayGoldValue}>{state.gold}G</Text>
+              </View>
+              <View style={styles.rewardRow}>
+                {state.rewardOptions.map(option => {
+                  const isSelected = selectedRewardId === option.id;
+                  const previewImage = option.type === 'joker' ? getJokerPreviewImage(option.jokerId) : undefined;
+                  const actionCard = option.type === 'card' ? getActionCard(option.cardId) : undefined;
+                  const actionPreviewImage =
+                    option.type === 'card' ? getActionCardPreviewImage(option.cardId) : undefined;
+                  const actionTheme = actionCard ? getActionTheme(actionCard.tags) : undefined;
+                  const joker = option.type === 'joker' ? getJoker(option.jokerId) : undefined;
+                  const rarityTheme = joker ? JOKER_RARITY_COLORS[joker.rarity] : undefined;
+                  return (
+                    <Pressable
+                      key={option.id}
+                      onPress={() => setSelectedRewardId(option.id)}
+                      onLongPress={() => setRewardTooltipId(option.id)}
+                      delayLongPress={220}
+                      onPressOut={() => setRewardTooltipId(current => (current === option.id ? null : current))}
+                      style={[
+                        styles.rewardCard,
+                        option.type === 'joker' && rarityTheme ? { borderColor: rarityTheme.frame } : undefined,
+                        option.type === 'joker' && isSelected && rarityTheme
+                          ? { shadowColor: rarityTheme.frame, backgroundColor: '#e6f0ff' }
+                          : undefined,
+                        isSelected ? styles.rewardCardSelected : undefined,
+                      ]}>
+                      {previewImage ? (
+                        <Image source={previewImage} style={styles.rewardCardImage} resizeMode="cover" />
+                      ) : actionPreviewImage ? (
+                        <Image source={actionPreviewImage} style={styles.rewardCardImage} resizeMode="cover" />
+                      ) : actionCard && actionTheme ? (
+                        <View
+                          style={[
+                            styles.rewardCardFace,
+                            {
+                              backgroundColor: actionTheme.surface,
+                              borderColor: actionTheme.frame,
+                            },
+                          ]}>
+                          <View pointerEvents="none" style={styles.cardFaceShine} />
+                          <Text style={[styles.cardGlyph, { color: actionTheme.accent }]}>
+                            {actionCard.name.slice(0, 1)}
+                          </Text>
+                          <Text numberOfLines={1} style={styles.handCardTitle}>
+                            {actionCard.name}
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={styles.rewardCardPlaceholder}>
+                          <Text style={styles.rewardCardPlaceholderText}>{option.title.slice(0, 1)}</Text>
+                        </View>
+                      )}
+                      {option.type !== 'card' ? (
+                        <Text numberOfLines={1} style={styles.rewardCardTitle}>
+                          {option.title}
+                        </Text>
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {rewardTooltipId ? (
+                <View style={styles.rewardTooltip}>
+                  <Text style={styles.rewardTooltipTitle}>
+                    {state.rewardOptions.find(option => option.id === rewardTooltipId)?.title}
                   </Text>
-                </Pressable>
-              ))}
+                  <Text style={styles.rewardTooltipBody}>
+                    {state.rewardOptions.find(option => option.id === rewardTooltipId)?.description}
+                  </Text>
+                </View>
+              ) : null}
+              <Pressable
+                onPress={() => {
+                  if (selectedRewardOption) {
+                    applyReward(selectedRewardOption);
+                  }
+                }}
+                disabled={!selectedRewardOption}
+                style={[
+                  styles.largePrimaryButton,
+                  !selectedRewardOption ? styles.largePrimaryButtonDisabled : undefined,
+                ]}>
+                <Text style={styles.largePrimaryButtonText}>선택</Text>
+              </Pressable>
             </View>
           ) : null}
 
           {state.phase === 'shop' ? (
             <View style={styles.overlayList}>
               <Text style={styles.modalIntro}>골드를 써서 빌드를 다듬고 다음 스테이지로 이동합니다.</Text>
-              {state.shopItems.map(item => (
-                <Pressable key={item.id} onPress={() => buyShopItem(item)} style={styles.overlayButton}>
-                  <Text style={styles.overlayButtonTitle}>
-                    {item.title} | {item.price}G
+              <View style={styles.overlayGoldBar}>
+                <Text style={styles.overlayGoldLabel}>보유 골드</Text>
+                <Text style={styles.overlayGoldValue}>{state.gold}G</Text>
+              </View>
+              <View style={styles.rewardRow}>
+                {state.shopItems.map(item => {
+                  const isSelected = selectedShopItemId === item.id;
+                  const jokerPreview =
+                    item.type === 'joker' ? getJokerPreviewImage(item.jokerId) : undefined;
+                  const actionCard = item.type === 'card' ? getActionCard(item.cardId) : undefined;
+                  const actionPreviewImage =
+                    item.type === 'card' ? getActionCardPreviewImage(item.cardId) : undefined;
+                  const actionTheme = actionCard ? getActionTheme(actionCard.tags) : undefined;
+                  const joker = item.type === 'joker' ? getJoker(item.jokerId) : undefined;
+                  const rarityTheme = joker ? JOKER_RARITY_COLORS[joker.rarity] : undefined;
+                  return (
+                    <Pressable
+                      key={item.id}
+                      onPress={() => setSelectedShopItemId(item.id)}
+                      onLongPress={() => setShopTooltipId(item.id)}
+                      delayLongPress={220}
+                      onPressOut={() => setShopTooltipId(current => (current === item.id ? null : current))}
+                      style={[
+                        styles.rewardCard,
+                        item.type === 'joker' && rarityTheme ? { borderColor: rarityTheme.frame } : undefined,
+                        item.type === 'joker' && isSelected && rarityTheme
+                          ? { shadowColor: rarityTheme.frame, backgroundColor: '#e6f0ff' }
+                          : undefined,
+                        isSelected ? styles.rewardCardSelected : undefined,
+                      ]}>
+                      {jokerPreview ? (
+                        <Image source={jokerPreview} style={styles.rewardCardImage} resizeMode="cover" />
+                      ) : actionPreviewImage ? (
+                        <Image source={actionPreviewImage} style={styles.rewardCardImage} resizeMode="cover" />
+                      ) : item.type === 'card' && actionCard && actionTheme ? (
+                        <View
+                          style={[
+                            styles.rewardCardFace,
+                            {
+                              backgroundColor: actionTheme.surface,
+                              borderColor: actionTheme.frame,
+                            },
+                          ]}>
+                          <View pointerEvents="none" style={styles.cardFaceShine} />
+                          <Text style={[styles.cardGlyph, { color: actionTheme.accent }]}>
+                            {actionCard.name.slice(0, 1)}
+                          </Text>
+                          <Text numberOfLines={1} style={styles.handCardTitle}>
+                            {actionCard.name}
+                          </Text>
+                          <Text numberOfLines={1} style={styles.rewardCardPrice}>
+                            {item.price}G
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={styles.rewardCardPlaceholder}>
+                          <Text style={styles.rewardCardPlaceholderText}>{item.title.slice(0, 1)}</Text>
+                        </View>
+                      )}
+
+                      {item.type !== 'card' ? (
+                        <Text numberOfLines={1} style={styles.rewardCardTitle}>
+                          {item.title}
+                          {' | '}
+                          {item.price}G
+                        </Text>
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {shopTooltipId ? (
+                <View style={styles.rewardTooltip}>
+                  <Text style={styles.rewardTooltipTitle}>
+                    {state.shopItems.find(item => item.id === shopTooltipId)?.title}
                   </Text>
-                  <Text numberOfLines={2} style={styles.overlayButtonBody}>
-                    {item.description}
+                  <Text style={styles.rewardTooltipBody}>
+                    {state.shopItems.find(item => item.id === shopTooltipId)?.description}
                   </Text>
-                </Pressable>
-              ))}
+                </View>
+              ) : null}
+
+              <Pressable
+                onPress={() => {
+                  if (selectedShopItem && canBuySelectedShopItem) {
+                    buyShopItem(selectedShopItem);
+                  }
+                }}
+                disabled={!canBuySelectedShopItem}
+                style={[
+                  styles.largePrimaryButton,
+                  !canBuySelectedShopItem ? styles.largePrimaryButtonDisabled : undefined,
+                ]}>
+                <Text style={styles.largePrimaryButtonText}>
+                  {selectedShopItem
+                    ? canBuySelectedShopItem
+                      ? `구매 (${selectedShopItem.price}G)`
+                      : `골드 부족 (${selectedShopItem.price}G)`
+                    : '아이템 선택'}
+                </Text>
+              </Pressable>
               <Pressable onPress={continueFromShop} style={styles.largePrimaryButton}>
                 <Text style={styles.largePrimaryButtonText}>다음 스테이지</Text>
               </Pressable>
@@ -2107,6 +2329,38 @@ const styles = StyleSheet.create({
     color: '#102033',
     textAlign: 'center',
   },
+  handCardArtCard: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 14,
+    overflow: 'hidden',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+  handCardArtImage: {
+    borderRadius: 14,
+  },
+  handCardArtOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(11, 20, 36, 0.16)',
+  },
+  handCardMiniBadgeOnImage: {
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.65)',
+  },
+  handCardFooterOnImage: {
+    width: '100%',
+    backgroundColor: 'rgba(8, 15, 28, 0.56)',
+    borderRadius: 8,
+    paddingHorizontal: 5,
+    paddingVertical: 3,
+  },
+  handCardTitleOnImage: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: '#f8fbff',
+    textAlign: 'center',
+  },
   bottomBar: {
     flex: 0.42,
     flexDirection: 'row',
@@ -2259,6 +2513,121 @@ const styles = StyleSheet.create({
   overlayList: {
     gap: 10,
   },
+  overlayGoldBar: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  overlayGoldLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4c6f8d',
+  },
+  overlayGoldValue: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0d63c9',
+  },
+  rewardRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    rowGap: 10,
+  },
+  rewardCard: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: '32%',
+    padding: 8,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: '#d5e2ee',
+    backgroundColor: '#eef4fa',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 7,
+  },
+  rewardCardSelected: {
+    borderColor: '#3b82f6',
+    backgroundColor: '#e6f0ff',
+    shadowColor: '#3b82f6',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  rewardCardImage: {
+    width: '100%',
+    height: 110,
+    borderRadius: 10,
+  },
+  rewardCardPlaceholder: {
+    width: '100%',
+    height: 110,
+    borderRadius: 10,
+    backgroundColor: '#d8e4f1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rewardCardFace: {
+    width: '100%',
+    height: 110,
+    borderRadius: 10,
+    backgroundColor: '#fcfdff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    paddingVertical: 4,
+    gap: 2,
+    borderWidth: 1,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  rewardCardPlaceholderText: {
+    fontSize: 26,
+    fontWeight: '900',
+    color: '#35506b',
+  },
+  rewardCardPrice: {
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#35506b',
+    textAlign: 'center',
+  },
+  rewardCardTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#102033',
+    textAlign: 'center',
+  },
+  rewardTooltip: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 2,
+  },
+  rewardTooltipTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#173450',
+  },
+  rewardTooltipBody: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#4c6f8d',
+  },
   overlayButton: {
     borderRadius: 16,
     backgroundColor: '#ebf1f8',
@@ -2297,6 +2666,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#1072f1',
     paddingVertical: 14,
     alignItems: 'center',
+  },
+  largePrimaryButtonDisabled: {
+    opacity: 0.45,
   },
   largePrimaryButtonText: {
     color: '#ffffff',

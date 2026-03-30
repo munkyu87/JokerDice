@@ -8,6 +8,7 @@ const JOKER_PREVIEW_IMAGES: Record<string, ImageSourcePropType> = {
   triple_boost: require('../assets/jokers/triple-boost.png'),
   straight_spark: require('../assets/jokers/straight-spark.png'),
   full_grip: require('../assets/jokers/full-grip.png'),
+  gap_draw: require('../assets/jokers/golden-touch.png'),
 };
 
 export const getJokerPreviewImage = (jokerId: string): ImageSourcePropType | undefined =>

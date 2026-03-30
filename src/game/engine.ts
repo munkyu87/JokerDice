@@ -245,13 +245,14 @@ const createBaseScoreContext = (dice: DiceRoll) => {
   const evaluation = evaluateHand(dice);
 
   return {
-    scoringDice: [...dice],
+    // BossScoreContext/JokerEffectContext의 scoringDice는 number[] 기준이라 타입을 맞춰줍니다.
+    scoringDice: [...dice] as number[],
     handRank: evaluation.rank,
     handBase: HAND_BASE_SCORES[evaluation.rank],
     diceBase: evaluation.total,
     bonusBase: 0,
     multiplier: 1,
-    notes: [],
+    notes: [] as string[],
   };
 };
 
@@ -295,6 +296,8 @@ export const scoreDice = ({
     multiplier: scoreContext.multiplier,
     finalScore: 0,
     extraRerolls: 0,
+    handSizeBonus: 0,
+    handRefreshes: 0,
     goldDelta: 0,
     notes: scoreContext.notes,
   };
@@ -405,6 +408,9 @@ export const createShopItems = ({
   ownedJokers: string[];
   rng?: () => number;
 }): ShopItem[] => {
+  const hasMarketExpansion = ownedJokers.includes('shop_6_slot');
+  const desiredCount = hasMarketExpansion ? 6 : 3;
+
   const jokerPool = shuffle(
     JOKERS.filter(joker => !ownedJokers.includes(joker.id)),
     rng,
@@ -432,29 +438,41 @@ export const createShopItems = ({
 
   const items: ShopItem[] = [];
 
-  if (jokerPool[0]) {
+  // 기본 3칸: (조커 1) + (핸드카드 1) + (유틸 1)
+  // Golden Touch 보유: (조커 2) + (핸드카드 3) + (유틸 1) = 6
+  const maxJokers = hasMarketExpansion ? 2 : 1;
+  const maxCards = hasMarketExpansion ? 3 : 1;
+
+  for (let i = 0; i < maxJokers; i += 1) {
+    const joker = jokerPool[i];
+    if (!joker) break;
     items.push({
-      id: `shop-joker-${jokerPool[0].id}`,
+      id: `shop-joker-${joker.id}`,
       type: 'joker',
-      jokerId: jokerPool[0].id,
-      title: jokerPool[0].name,
-      description: jokerPool[0].description,
+      jokerId: joker.id,
+      title: joker.name,
+      description: joker.description,
       price: 6,
     });
   }
 
-  if (cardPool[0]) {
+  for (let i = 0; i < maxCards; i += 1) {
+    const card = cardPool[i];
+    if (!card) break;
     items.push({
-      id: `shop-card-${cardPool[0].id}`,
+      id: `shop-card-${card.id}`,
       type: 'card',
-      cardId: cardPool[0].id,
-      title: cardPool[0].name,
-      description: cardPool[0].description,
+      cardId: card.id,
+      title: card.name,
+      description: card.description,
       price: 3,
     });
   }
 
-  items.push(utilityItems[0]);
+  for (let i = 0; i < utilityItems.length && items.length < desiredCount; i += 1) {
+    items.push(utilityItems[i]);
+  }
 
-  return items;
+  // UI는 row 기준으로 렌더링하므로 구매/선택 로직을 해치지 않는 범위에서 섞기만 합니다.
+  return shuffle(items, rng).slice(0, desiredCount);
 };

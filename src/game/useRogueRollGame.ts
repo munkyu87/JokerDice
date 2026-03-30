@@ -381,10 +381,14 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
       const nextScore = currentState.stage.currentScore + scoring.finalScore;
       const remainingHands = currentState.stage.remainingHands - 1;
       const gainedGold = scoring.goldDelta;
-      const clearedDeck = discardHand(currentState.deck);
-      const updatedState: GameState = {
-        ...currentState,
-        deck: clearedDeck,
+      const rng = Math.random;
+
+      const currentStageDefinition = getStageDefinitionForProgress(
+        currentState.stage.ante,
+        currentState.stage.stageIndex,
+      );
+
+      const baseProgress: Pick<GameState, 'gold' | 'lastScore'> = {
         gold: currentState.gold + gainedGold,
         lastScore: {
           ...scoring,
@@ -392,12 +396,13 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
         },
       };
 
-      const currentStageDefinition = getStageDefinitionForProgress(
-        currentState.stage.ante,
-        currentState.stage.stageIndex,
-      );
-
       if (nextScore >= currentStageDefinition.targetScore) {
+        const clearedDeck = discardHand(currentState.deck);
+        const updatedState: GameState = {
+          ...currentState,
+          deck: clearedDeck,
+          ...baseProgress,
+        };
         const stageRewardGold = currentStageDefinition.rewardGold;
         const clearedStageState: GameState = {
           ...updatedState,
@@ -429,11 +434,14 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
       }
 
       if (remainingHands <= 0) {
+        const clearedDeck = discardHand(currentState.deck);
         return {
-          ...updatedState,
+          ...currentState,
+          deck: clearedDeck,
+          ...baseProgress,
           phase: 'defeat',
           stage: {
-            ...updatedState.stage,
+            ...currentState.stage,
             currentScore: nextScore,
             remainingHands: 0,
           },
@@ -441,23 +449,45 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
         };
       }
 
-      const nextHand = beginHand({
-        deck: clearedDeck,
-        jokers: currentState.jokers,
-        bossId: currentState.stage.bossId,
-        rng: Math.random,
-      });
+      // 같은 스테이지 내 다음 Hand: 손패(덱의 hand)는 유지하고 주사위만 새로 굴림. 덱 셔플·추가 드로우는 스테이지 클리어 후 다음 스테이지에서만.
+      const handStartBonus = getHandStartBonus(currentState.jokers, currentState.stage.bossId);
+      const drawCount = BASE_HAND_DRAW + handStartBonus.handSizeBonus;
+
+      const { activeJokerIds } = getActiveJokerIds(currentState.jokers, currentState.stage.bossId);
+      let deckAfterGapFill = currentState.deck;
+      let gapFillNote = '';
+      if (
+        activeJokerIds.includes('gap_draw') &&
+        deckAfterGapFill.hand.length < drawCount
+      ) {
+        deckAfterGapFill = drawCards(
+          deckAfterGapFill,
+          Math.min(deckAfterGapFill.hand.length + 1, drawCount),
+          rng,
+        );
+        if (deckAfterGapFill.hand.length > currentState.deck.hand.length) {
+          gapFillNote = ' Gap Fill: 빈 슬롯을 덱에서 1장 채웠습니다.';
+        }
+      }
 
       return {
-        ...updatedState,
-        deck: nextHand.deck,
+        ...currentState,
+        ...baseProgress,
+        deck: deckAfterGapFill,
         stage: {
-          ...updatedState.stage,
+          ...currentState.stage,
           currentScore: nextScore,
           remainingHands,
         },
-        hand: nextHand.hand,
-        message: `Hand 점수 ${scoring.finalScore}. ${nextHand.message}`,
+        hand: {
+          dice: rollDice(5, rng),
+          selectedDice: [],
+          cardsPlayed: 0,
+          freeRerolls: handStartBonus.extraRerolls,
+          drawCount,
+          handRefreshes: handStartBonus.handRefreshes,
+        },
+        message: `Hand 점수 ${scoring.finalScore}. 같은 손패로 다음 라운드를 진행합니다.${gapFillNote}`,
       };
     });
   };
