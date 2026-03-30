@@ -8,11 +8,30 @@ import {
   HandRank,
   JokerDefinition,
   JokerEffectContext,
+  JokerRarity,
   PurgeOption,
   RewardOption,
   ScoreResult,
   ShopItem,
 } from './types';
+
+/** 상점에서 핸드 카드·조커를 살 때 기준가 (판매가는 항상 이보다 낮게) */
+export const SHOP_HAND_CARD_PRICE = 3;
+export const SHOP_JOKER_PRICE = 6;
+
+/** 핸드 카드 1장 판매가 (구매가보다 낮음) */
+export const getSellPriceHandCard = (): number => Math.max(1, SHOP_HAND_CARD_PRICE - 1);
+
+/** 조커 1장 판매가 — 등급 반영, 상점 구매가(6G) 미만 */
+export const getSellPriceJoker = (rarity: JokerRarity): number => {
+  const byRarity: Record<JokerRarity, number> = {
+    common: 2,
+    uncommon: 2,
+    rare: 3,
+    legendary: 4,
+  };
+  return Math.min(byRarity[rarity], SHOP_JOKER_PRICE - 1);
+};
 
 const HAND_BASE_SCORES: Record<HandRank, number> = {
   high_card: 0,
@@ -452,7 +471,7 @@ export const createShopItems = ({
       jokerId: joker.id,
       title: joker.name,
       description: joker.description,
-      price: 6,
+      price: SHOP_JOKER_PRICE,
     });
   }
 
@@ -465,7 +484,7 @@ export const createShopItems = ({
       cardId: card.id,
       title: card.name,
       description: card.description,
-      price: 3,
+      price: SHOP_HAND_CARD_PRICE,
     });
   }
 

@@ -122,6 +122,23 @@ export type RewardOption =
       description: string;
     };
 
+/** 스테이지 클리어 직후 정산 팝업용 (보상 선택 전) */
+export type StageSettlementSummary = {
+  ante: number;
+  stageIndex: number;
+  stageName: string;
+  targetScore: number;
+  spareHands: number;
+  spareRolls: number;
+  efficiencyGold: number;
+  blindRewardGold: number;
+  handScoreGold: number;
+  goldBeforeHand: number;
+  goldAfter: number;
+  isRunComplete: boolean;
+  pendingRewardOptions: RewardOption[];
+};
+
 export type ShopItem =
   | {
       id: string;

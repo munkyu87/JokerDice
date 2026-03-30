@@ -16,7 +16,14 @@ import {
   View,
 } from 'react-native';
 
-import { getActionCard, getJoker } from '../game/engine';
+import {
+  getActionCard,
+  getJoker,
+  getSellPriceHandCard,
+  getSellPriceJoker,
+  SHOP_HAND_CARD_PRICE,
+  SHOP_JOKER_PRICE,
+} from '../game/engine';
 import { getActionCardPreviewImage } from '../game/actionCardPreviewImages';
 import { getJokerPreviewImage } from '../game/jokerPreviewImages';
 import { useRogueRollGame } from '../game/useRogueRollGame';
@@ -180,6 +187,51 @@ const DieFace = ({
   </View>
 );
 
+const DropZoneHandPreview = ({ cardId }: { cardId: string }) => {
+  const card = getActionCard(cardId);
+  if (!card) {
+    return null;
+  }
+
+  const img = getActionCardPreviewImage(cardId);
+  const theme = getActionTheme(card.tags);
+
+  return (
+    <View style={[styles.dropZoneMiniCard, { borderColor: theme.frame, backgroundColor: theme.surface }]}>
+      {img ? (
+        <Image source={img} style={styles.dropZoneMiniCardImage} resizeMode="cover" />
+      ) : (
+        <Text style={[styles.dropZoneMiniCardGlyph, { color: theme.accent }]}>{card.name.slice(0, 1)}</Text>
+      )}
+    </View>
+  );
+};
+
+const DropZoneJokerPreview = ({ jokerId }: { jokerId: string }) => {
+  const joker = getJoker(jokerId);
+  if (!joker) {
+    return null;
+  }
+
+  const img = getJokerPreviewImage(jokerId);
+  const theme = getJokerTheme(joker.tags);
+  const rarityTheme = JOKER_RARITY_COLORS[joker.rarity];
+
+  return (
+    <View
+      style={[
+        styles.dropZoneMiniJoker,
+        { borderColor: rarityTheme?.frame ?? theme.frame, backgroundColor: theme.surface },
+      ]}>
+      {img ? (
+        <Image source={img} style={styles.dropZoneMiniJokerImage} resizeMode="cover" />
+      ) : (
+        <Text style={[styles.dropZoneMiniJokerGlyph, { color: theme.accent }]}>{joker.name.slice(0, 1)}</Text>
+      )}
+    </View>
+  );
+};
+
 export function RogueRollScreen({
   startingJokerId = 'lucky_reroll',
   onBackToLobby,
@@ -200,8 +252,16 @@ export function RogueRollScreen({
   const [selectedShopItemId, setSelectedShopItemId] = useState<string | null>(null);
   const [shopTooltipId, setShopTooltipId] = useState<string | null>(null);
   const [draggingCardIndex, setDraggingCardIndex] = useState<number | null>(null);
+  const [draggingJokerIndex, setDraggingJokerIndex] = useState<number | null>(null);
+  const [isDraggingOverSellZone, setIsDraggingOverSellZone] = useState(false);
   const [isDraggingOverUseZone, setIsDraggingOverUseZone] = useState(false);
   const [useZoneRect, setUseZoneRect] = useState<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [sellZoneRect, setSellZoneRect] = useState<{
     x: number;
     y: number;
     width: number;
@@ -219,11 +279,16 @@ export function RogueRollScreen({
     rerollSelectedDice,
     refreshHandCards,
     playCard,
+    sellHandCard,
+    reorderHandCards,
+    reorderJokers,
+    sellJoker,
     submitHand,
     applyReward,
     buyShopItem,
     removeDeckCard,
     continueFromShop,
+    continueFromSettlement,
     restartRun,
   } = useRogueRollGame(startingJokerId);
   const visibleCardSlotCount = Math.max(3, state.hand.drawCount, state.deck.hand.length);
@@ -237,9 +302,15 @@ export function RogueRollScreen({
   const cardSelectAnimationsRef = useRef<Animated.Value[]>([]);
   const cardDragAnimationsRef = useRef<Animated.ValueXY[]>([]);
   const jokerSelectAnimationsRef = useRef([0, 1, 2, 3, 4].map(() => new Animated.Value(0)));
+  const jokerDragAnimationsRef = useRef<Animated.ValueXY[]>([]);
   const cardTooltipAnimation = useRef(new Animated.Value(0)).current;
   const jokerTooltipAnimation = useRef(new Animated.Value(0)).current;
   const useZoneRef = useRef<View | null>(null);
+  const sellZoneRef = useRef<View | null>(null);
+  const cardSlotRefs = useRef<Array<View | null>>([]);
+  const cardSlotRectsRef = useRef<Array<{ x: number; y: number; width: number; height: number } | null>>([]);
+  const jokerSlotRefs = useRef<Array<View | null>>([]);
+  const jokerSlotRectsRef = useRef<Array<{ x: number; y: number; width: number; height: number } | null>>([]);
   const previousDiceRef = useRef(state.hand.dice);
   const mountedRef = useRef(false);
   const timeoutRefs = useRef<Array<ReturnType<typeof setTimeout> | null>>(
@@ -247,6 +318,9 @@ export function RogueRollScreen({
   );
 
   const overlayTitle = useMemo(() => {
+    if (state.phase === 'settlement') {
+      return '스테이지 정산';
+    }
     if (state.phase === 'reward') {
       return '보상 선택';
     }
@@ -362,6 +436,10 @@ export function RogueRollScreen({
     cardDragAnimationsRef.current.push(new Animated.ValueXY({ x: 0, y: 0 }));
   }
 
+  while (jokerDragAnimationsRef.current.length < jokerSlotCount) {
+    jokerDragAnimationsRef.current.push(new Animated.ValueXY({ x: 0, y: 0 }));
+  }
+
   const handleCardPreview = (index: number) => {
     setSelectedJokerIndex(null);
     setSelectedCardIndex(current => (current === index ? null : index));
@@ -371,6 +449,20 @@ export function RogueRollScreen({
     setSelectedCardIndex(null);
     setSelectedJokerIndex(current => (current === index ? null : index));
   };
+
+  const resetDraggedJokerPosition = useCallback((slotIndex: number) => {
+    const dragAnimation = jokerDragAnimationsRef.current[slotIndex];
+    if (!dragAnimation) {
+      return;
+    }
+
+    Animated.spring(dragAnimation, {
+      toValue: { x: 0, y: 0 },
+      friction: 7,
+      tension: 120,
+      useNativeDriver: true,
+    }).start();
+  }, []);
 
   const resetDraggedCardPosition = useCallback((index: number) => {
     const dragAnimation = cardDragAnimationsRef.current[index];
@@ -394,6 +486,14 @@ export function RogueRollScreen({
     });
   }, []);
 
+  const updateSellZoneRect = useCallback(() => {
+    requestAnimationFrame(() => {
+      sellZoneRef.current?.measureInWindow((x, y, width, height) => {
+        setSellZoneRect({ x, y, width, height });
+      });
+    });
+  }, []);
+
   const isPointInsideUseZone = useCallback(
     (moveX: number, moveY: number) =>
     Boolean(
@@ -406,6 +506,54 @@ export function RogueRollScreen({
     [useZoneRect],
   );
 
+  const isPointInsideSellZone = useCallback(
+    (moveX: number, moveY: number) =>
+      Boolean(
+        sellZoneRect &&
+          moveX >= sellZoneRect.x &&
+          moveX <= sellZoneRect.x + sellZoneRect.width &&
+          moveY >= sellZoneRect.y &&
+          moveY <= sellZoneRect.y + sellZoneRect.height,
+      ),
+    [sellZoneRect],
+  );
+
+  const findSlotIndexAtPoint = useCallback(
+    (
+      x: number,
+      y: number,
+      rects: Array<{ x: number; y: number; width: number; height: number } | null | undefined>,
+      slotCount: number,
+    ): number | null => {
+      for (let i = 0; i < slotCount; i += 1) {
+        const r = rects[i];
+        if (!r) {
+          continue;
+        }
+        if (x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height) {
+          return i;
+        }
+      }
+      let best: number | null = null;
+      let bestDist = Infinity;
+      for (let i = 0; i < slotCount; i += 1) {
+        const r = rects[i];
+        if (!r) {
+          continue;
+        }
+        const cx = r.x + r.width / 2;
+        const cy = r.y + r.height / 2;
+        const d = (x - cx) ** 2 + (y - cy) ** 2;
+        if (d < bestDist) {
+          bestDist = d;
+          best = i;
+        }
+      }
+      return best;
+    },
+    [],
+  );
+
   useEffect(() => {
     if (selectedCardIndex !== null && selectedCardIndex >= state.deck.hand.length) {
       setSelectedCardIndex(null);
@@ -413,17 +561,40 @@ export function RogueRollScreen({
   }, [selectedCardIndex, state.deck.hand.length]);
 
   useEffect(() => {
-    if (draggingCardIndex !== null) {
-      updateUseZoneRect();
+    if (selectedJokerIndex !== null && selectedJokerIndex >= state.jokers.length) {
+      setSelectedJokerIndex(null);
     }
-  }, [draggingCardIndex, updateUseZoneRect, visibleCardSlotCount]);
+  }, [selectedJokerIndex, state.jokers.length]);
+
+  useEffect(() => {
+    if (draggingCardIndex !== null || draggingJokerIndex !== null) {
+      updateSellZoneRect();
+      if (draggingCardIndex !== null) {
+        updateUseZoneRect();
+      }
+    }
+  }, [
+    draggingCardIndex,
+    draggingJokerIndex,
+    updateSellZoneRect,
+    updateUseZoneRect,
+    visibleCardSlotCount,
+  ]);
 
   useEffect(() => {
     if (draggingCardIndex !== null && draggingCardIndex >= state.deck.hand.length) {
       setDraggingCardIndex(null);
       setIsDraggingOverUseZone(false);
+      setIsDraggingOverSellZone(false);
     }
   }, [draggingCardIndex, state.deck.hand.length]);
+
+  useEffect(() => {
+    if (draggingJokerIndex !== null && draggingJokerIndex >= state.jokers.length) {
+      setDraggingJokerIndex(null);
+      setIsDraggingOverSellZone(false);
+    }
+  }, [draggingJokerIndex, state.jokers.length]);
 
   useEffect(() => {
     const timeouts = timeoutRefs.current;
@@ -577,41 +748,148 @@ export function RogueRollScreen({
             dragAnimation?.stopAnimation();
             dragAnimation?.setValue({ x: 0, y: 0 });
             setDraggingCardIndex(index);
+            updateSellZoneRect();
             updateUseZoneRect();
+            for (let i = 0; i < visibleCardSlotCount; i += 1) {
+              cardSlotRefs.current[i]?.measureInWindow((x, y, w, h) => {
+                cardSlotRectsRef.current[i] = { x, y, width: w, height: h };
+              });
+            }
           },
           onPanResponderMove: (_, gestureState) => {
             cardDragAnimationsRef.current[index].setValue({
               x: gestureState.dx,
               y: gestureState.dy,
             });
-            setIsDraggingOverUseZone(isPointInsideUseZone(gestureState.moveX, gestureState.moveY));
+            const mx = gestureState.moveX;
+            const my = gestureState.moveY;
+            setIsDraggingOverSellZone(isPointInsideSellZone(mx, my));
+            setIsDraggingOverUseZone(isPointInsideUseZone(mx, my));
           },
           onPanResponderRelease: (_, gestureState) => {
-            const shouldUseCard = isPointInsideUseZone(gestureState.moveX, gestureState.moveY);
+            const mx = gestureState.moveX;
+            const my = gestureState.moveY;
+            const shouldSell = isPointInsideSellZone(mx, my);
+            const shouldUseCard = isPointInsideUseZone(mx, my);
 
             resetDraggedCardPosition(index);
             setDraggingCardIndex(null);
             setIsDraggingOverUseZone(false);
+            setIsDraggingOverSellZone(false);
 
-            if (shouldUseCard) {
+            if (shouldSell) {
+              sellHandCard(index);
+            } else if (shouldUseCard) {
               playCard(index);
+            } else {
+              const target = findSlotIndexAtPoint(
+                mx,
+                my,
+                cardSlotRectsRef.current,
+                visibleCardSlotCount,
+              );
+              if (target !== null && target !== index) {
+                reorderHandCards(index, target);
+                setSelectedCardIndex(null);
+              }
             }
           },
           onPanResponderTerminate: () => {
             resetDraggedCardPosition(index);
             setDraggingCardIndex(null);
             setIsDraggingOverUseZone(false);
+            setIsDraggingOverSellZone(false);
           },
         }),
       ),
     [
+      findSlotIndexAtPoint,
+      isPointInsideSellZone,
       isPointInsideUseZone,
       playCard,
+      reorderHandCards,
       resetDraggedCardPosition,
+      sellHandCard,
       state.deck.hand.length,
       state.phase,
+      updateSellZoneRect,
       updateUseZoneRect,
       visibleCardSlotCount,
+    ],
+  );
+
+  const jokerPanResponders = useMemo(
+    () =>
+      Array.from({ length: jokerSlotCount }, (_, slotIndex) =>
+        PanResponder.create({
+          onMoveShouldSetPanResponderCapture: (_, gestureState) =>
+            state.phase === 'playing' &&
+            Boolean(state.jokers[slotIndex]) &&
+            (Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2),
+          onMoveShouldSetPanResponder: (_, gestureState) =>
+            state.phase === 'playing' &&
+            Boolean(state.jokers[slotIndex]) &&
+            (Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2),
+          onPanResponderGrant: () => {
+            const dragAnimation = jokerDragAnimationsRef.current[slotIndex];
+            dragAnimation?.stopAnimation();
+            dragAnimation?.setValue({ x: 0, y: 0 });
+            setDraggingJokerIndex(slotIndex);
+            updateSellZoneRect();
+            for (let i = 0; i < jokerSlotCount; i += 1) {
+              jokerSlotRefs.current[i]?.measureInWindow((x, y, w, h) => {
+                jokerSlotRectsRef.current[i] = { x, y, width: w, height: h };
+              });
+            }
+          },
+          onPanResponderMove: (_, gestureState) => {
+            jokerDragAnimationsRef.current[slotIndex].setValue({
+              x: gestureState.dx,
+              y: gestureState.dy,
+            });
+            setIsDraggingOverSellZone(
+              isPointInsideSellZone(gestureState.moveX, gestureState.moveY),
+            );
+          },
+          onPanResponderRelease: (_, gestureState) => {
+            const shouldSell = isPointInsideSellZone(gestureState.moveX, gestureState.moveY);
+
+            resetDraggedJokerPosition(slotIndex);
+            setDraggingJokerIndex(null);
+            setIsDraggingOverSellZone(false);
+
+            if (shouldSell) {
+              sellJoker(slotIndex);
+            } else {
+              const target = findSlotIndexAtPoint(
+                gestureState.moveX,
+                gestureState.moveY,
+                jokerSlotRectsRef.current,
+                jokerSlotCount,
+              );
+              if (target !== null && target !== slotIndex) {
+                reorderJokers(slotIndex, target);
+                setSelectedJokerIndex(null);
+              }
+            }
+          },
+          onPanResponderTerminate: () => {
+            resetDraggedJokerPosition(slotIndex);
+            setDraggingJokerIndex(null);
+            setIsDraggingOverSellZone(false);
+          },
+        }),
+      ),
+    [
+      findSlotIndexAtPoint,
+      isPointInsideSellZone,
+      jokerSlotCount,
+      reorderJokers,
+      resetDraggedJokerPosition,
+      sellJoker,
+      state.jokers,
+      state.phase,
+      updateSellZoneRect,
     ],
   );
 
@@ -621,6 +899,38 @@ export function RogueRollScreen({
       <View style={[styles.screen, isCompact ? styles.screenCompact : undefined]}>
         {selectedCard || selectedJoker ? (
           <Pressable onPress={dismissActiveTooltip} style={styles.tooltipDismissOverlay} />
+        ) : null}
+        {state.phase === 'playing' && (draggingCardIndex !== null || draggingJokerIndex !== null) ? (
+          <View
+            ref={sellZoneRef}
+            collapsable={false}
+            onLayout={updateSellZoneRect}
+            pointerEvents="none"
+            style={[
+              styles.topSellZone,
+              isDraggingOverSellZone ? styles.topSellZoneActive : undefined,
+            ]}>
+            {isDraggingOverSellZone && draggingCardIndex !== null && state.deck.hand[draggingCardIndex] ? (
+              <DropZoneHandPreview cardId={state.deck.hand[draggingCardIndex]} />
+            ) : null}
+            {isDraggingOverSellZone && draggingJokerIndex !== null && state.jokers[draggingJokerIndex] ? (
+              <DropZoneJokerPreview jokerId={state.jokers[draggingJokerIndex]} />
+            ) : null}
+            {draggingCardIndex !== null && state.deck.hand[draggingCardIndex] ? (
+              <Text style={styles.topSellZonePriceHint}>
+                핸드 카드 판매 +{getSellPriceHandCard()}G · 상점 구매 {SHOP_HAND_CARD_PRICE}G
+              </Text>
+            ) : draggingJokerIndex !== null && state.jokers[draggingJokerIndex] ? (
+              <Text style={styles.topSellZonePriceHint}>
+                조커 판매 +
+                {getSellPriceJoker(getJoker(state.jokers[draggingJokerIndex])!.rarity)}G · 상점 구매{' '}
+                {SHOP_JOKER_PRICE}G
+              </Text>
+            ) : null}
+            <Text style={styles.topSellZoneLabel}>
+              {isDraggingOverSellZone ? '놓으면 골드로 판매합니다' : '↑ 여기로 드롭하여 판매'}
+            </Text>
+          </View>
         ) : null}
         <View style={[styles.topRow, isCompact ? styles.topRowCompact : undefined]}>
           <View style={[styles.scorePanel, isCompact ? styles.scorePanelCompact : undefined]}>
@@ -744,25 +1054,48 @@ export function RogueRollScreen({
               const badgeLabel = joker ? TAG_LABELS[getPrimaryTag(joker.tags)] : 'EMPTY';
               const jokerPreviewImage = joker ? getJokerPreviewImage(joker.id) : undefined;
               const animation = jokerSelectAnimationsRef.current[slotIndex];
+              const jokerDragAnimation = jokerDragAnimationsRef.current[slotIndex];
+              const isJokerDragging = draggingJokerIndex === slotIndex;
+              const slotJokerInSell = isJokerDragging && isDraggingOverSellZone;
               const animatedStyle = {
                 transform: [
-                  {
-                    translateY: animation.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0, -6],
-                    }),
-                  },
-                  {
-                    scale: animation.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [1, 1.03],
-                    }),
-                  },
+                  ...(isJokerDragging && joker && jokerDragAnimation
+                    ? [
+                        { translateX: jokerDragAnimation.x },
+                        { translateY: jokerDragAnimation.y },
+                        { scale: slotJokerInSell ? 0.96 : 1.06 },
+                      ]
+                    : [
+                        {
+                          translateY: animation.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, -6],
+                          }),
+                        },
+                        {
+                          scale: animation.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [1, 1.03],
+                          }),
+                        },
+                      ]),
                 ],
               };
 
               return (
-                <Animated.View key={`joker-slot-${slotIndex}`} style={animatedStyle}>
+                <Animated.View
+                  key={`joker-slot-${slotIndex}`}
+                  ref={el => {
+                    jokerSlotRefs.current[slotIndex] = el as View | null;
+                  }}
+                  collapsable={false}
+                  onLayout={() => {
+                    jokerSlotRefs.current[slotIndex]?.measureInWindow((x, y, w, h) => {
+                      jokerSlotRectsRef.current[slotIndex] = { x, y, width: w, height: h };
+                    });
+                  }}
+                  style={[animatedStyle, isJokerDragging ? styles.draggingJokerSlot : undefined]}
+                  {...(joker ? jokerPanResponders[slotIndex].panHandlers : {})}>
                   <Pressable
                     disabled={!joker}
                     onPress={() => handleJokerPreview(slotIndex)}
@@ -780,6 +1113,7 @@ export function RogueRollScreen({
                       isSelected && rarityTheme ? { borderColor: rarityTheme.frame } : undefined,
                       isSelected && rarityTheme ? { shadowColor: rarityTheme.glow } : undefined,
                       isDisabled ? styles.jokerDisabled : undefined,
+                      slotJokerInSell ? styles.jokerCardSlottedGhost : undefined,
                     ]}>
                     {joker ? (
                       <>
@@ -993,6 +1327,9 @@ export function RogueRollScreen({
               const dragAnimation = cardDragAnimationsRef.current[index];
               const panResponder = cardPanResponders[index];
               const isDragging = draggingCardIndex === index;
+              const slotHandInSell = isDragging && isDraggingOverSellZone;
+              const slotHandInUse = isDragging && isDraggingOverUseZone && !isDraggingOverSellZone;
+              const slotHandHidden = slotHandInSell || slotHandInUse;
               const animatedStyle = {
                 transform: [
                   ...(isDragging
@@ -1004,7 +1341,7 @@ export function RogueRollScreen({
                           translateY: dragAnimation.y,
                         },
                         {
-                          scale: 1.03,
+                          scale: slotHandHidden ? 0.96 : 1.03,
                         },
                       ]
                     : [
@@ -1027,6 +1364,15 @@ export function RogueRollScreen({
               return (
                 <Animated.View
                   key={`card-slot-${index}-${cardId ?? 'empty'}`}
+                  ref={el => {
+                    cardSlotRefs.current[index] = el as View | null;
+                  }}
+                  collapsable={false}
+                  onLayout={() => {
+                    cardSlotRefs.current[index]?.measureInWindow((x, y, w, h) => {
+                      cardSlotRectsRef.current[index] = { x, y, width: w, height: h };
+                    });
+                  }}
                   style={[
                     animatedStyle,
                     styles.cardSlot,
@@ -1047,6 +1393,7 @@ export function RogueRollScreen({
                       isCompact ? styles.handCardCompact : undefined,
                       isPreviewing ? styles.handCardActive : undefined,
                       isDragging ? styles.handCardDragging : undefined,
+                      slotHandHidden ? styles.handCardSlottedGhost : undefined,
                       !card ? styles.emptyCard : undefined,
                     ]}>
                     {actionPreviewImage ? (
@@ -1110,7 +1457,7 @@ export function RogueRollScreen({
         </View>
 
         <View style={styles.bottomBar}>
-          {draggingCardIndex !== null ? (
+          {draggingCardIndex !== null && state.phase === 'playing' ? (
             <View
               ref={useZoneRef}
               collapsable={false}
@@ -1119,10 +1466,17 @@ export function RogueRollScreen({
               style={[
                 styles.bottomUseZone,
                 styles.bottomUseZoneWide,
-                isDraggingOverUseZone ? styles.bottomUseZoneActive : undefined,
+                isDraggingOverUseZone && !isDraggingOverSellZone ? styles.bottomUseZoneActive : undefined,
               ]}>
+              {isDraggingOverUseZone &&
+              !isDraggingOverSellZone &&
+              state.deck.hand[draggingCardIndex] ? (
+                <DropZoneHandPreview cardId={state.deck.hand[draggingCardIndex]} />
+              ) : null}
               <Text style={styles.bottomUseZoneLabel}>
-                {isDraggingOverUseZone ? '하단 아무 곳에 놓으면 사용됩니다' : '하단 점수 영역 전체에 드롭해서 카드 사용'}
+                {isDraggingOverUseZone && !isDraggingOverSellZone
+                  ? '놓으면 카드가 적용됩니다'
+                  : '하단 점수 영역에 드롭 → 카드 사용 · 위쪽은 판매'}
               </Text>
             </View>
           ) : (
@@ -1210,6 +1564,59 @@ export function RogueRollScreen({
         </OverlayModal>
 
         <OverlayModal visible={state.phase !== 'playing'} title={overlayTitle} onClose={() => undefined} dismissible={false}>
+          {state.phase === 'settlement' && state.settlement ? (
+            <View style={styles.overlayList}>
+              <Text style={styles.modalIntro}>
+                클리어한 블라인드와 남은 Hand·리롤에 따른 골드를 확인한 뒤 다음 단계로 진행합니다.
+              </Text>
+              <View style={styles.settlementStageCard}>
+                <Text style={styles.settlementStageTitle}>
+                  Ante {state.settlement.ante}/{totalAntes} · {state.settlement.stageName}
+                </Text>
+                <Text style={styles.settlementStageMeta}>
+                  Stage {state.settlement.stageIndex + 1}/3 · 목표 {state.settlement.targetScore}점
+                </Text>
+              </View>
+              <View style={styles.settlementRows}>
+                <View style={styles.settlementRow}>
+                  <Text style={styles.settlementRowLabel}>남은 Hand</Text>
+                  <Text style={styles.settlementRowValue}>{state.settlement.spareHands}</Text>
+                </View>
+                <View style={styles.settlementRow}>
+                  <Text style={styles.settlementRowLabel}>남은 리롤</Text>
+                  <Text style={styles.settlementRowValue}>{state.settlement.spareRolls}</Text>
+                </View>
+                <View style={styles.settlementDivider} />
+                <View style={styles.settlementRow}>
+                  <Text style={styles.settlementRowLabel}>Hand 점수 골드</Text>
+                  <Text style={styles.settlementRowValue}>+{state.settlement.handScoreGold}G</Text>
+                </View>
+                <View style={styles.settlementRow}>
+                  <Text style={styles.settlementRowLabel}>블라인드 보상</Text>
+                  <Text style={styles.settlementRowValue}>+{state.settlement.blindRewardGold}G</Text>
+                </View>
+                <View style={styles.settlementRow}>
+                  <Text style={styles.settlementRowLabel}>여유 보너스 (Hand+리롤)</Text>
+                  <Text style={styles.settlementRowValue}>+{state.settlement.efficiencyGold}G</Text>
+                </View>
+                <View style={styles.settlementDivider} />
+                <View style={styles.settlementRow}>
+                  <Text style={styles.settlementRowLabel}>이번 Hand 직전 보유</Text>
+                  <Text style={styles.settlementRowValue}>{state.settlement.goldBeforeHand}G</Text>
+                </View>
+                <View style={[styles.settlementRow, styles.settlementRowHighlight]}>
+                  <Text style={styles.settlementRowLabelStrong}>정산 후 보유 골드</Text>
+                  <Text style={styles.settlementRowValueStrong}>{state.settlement.goldAfter}G</Text>
+                </View>
+              </View>
+              <Pressable onPress={continueFromSettlement} style={styles.largePrimaryButton}>
+                <Text style={styles.largePrimaryButtonText}>
+                  {state.settlement.isRunComplete ? '런 완료로' : '보상 선택으로'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+
           {state.phase === 'reward' ? (
             <View style={styles.overlayList}>
               <Text style={styles.modalIntro}>세 가지 중 하나를 골라 다음 블라인드용 빌드를 만드세요.</Text>
@@ -1443,7 +1850,7 @@ export function RogueRollScreen({
           {state.phase === 'victory' ? (
             <PhaseCard
               title="Run Complete"
-              description="8엔티의 보스 블라인드까지 모두 돌파했습니다. 이번 프로토타입 런을 완전히 클리어했습니다."
+              description={`8 Ante 보스 블라인드까지 돌파했습니다. 최종 골드 ${state.gold}G. 새 런을 시작할 수 있습니다.`}
               actionLabel="새 런 시작"
               onPress={restartRun}
             />
@@ -1478,10 +1885,81 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 10,
     backgroundColor: '#eaf7ff',
+    position: 'relative',
   },
   screenCompact: {
     padding: 10,
     gap: 8,
+  },
+  topSellZone: {
+    position: 'absolute',
+    top: 8,
+    left: 0,
+    right: 0,
+    zIndex: 25,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: '#f59e0b',
+    backgroundColor: 'rgba(255, 247, 230, 0.96)',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'column',
+    gap: 8,
+    minHeight: 72,
+  },
+  topSellZoneActive: {
+    backgroundColor: 'rgba(254, 243, 199, 0.98)',
+    borderColor: '#ea580c',
+  },
+  topSellZoneLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#9a3412',
+    textAlign: 'center',
+  },
+  topSellZonePriceHint: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#78350f',
+    textAlign: 'center',
+    lineHeight: 15,
+  },
+  dropZoneMiniCard: {
+    width: 44,
+    height: 56,
+    borderRadius: 10,
+    borderWidth: 2,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dropZoneMiniCardImage: {
+    width: '100%',
+    height: '100%',
+  },
+  dropZoneMiniCardGlyph: {
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  dropZoneMiniJoker: {
+    width: 48,
+    height: 60,
+    borderRadius: 10,
+    borderWidth: 2,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dropZoneMiniJokerImage: {
+    width: '100%',
+    height: '100%',
+  },
+  dropZoneMiniJokerGlyph: {
+    fontSize: 22,
+    fontWeight: '900',
   },
   startJokerSplashOverlay: {
     position: 'absolute',
@@ -1798,6 +2276,9 @@ const styles = StyleSheet.create({
   },
   jokerDisabled: {
     opacity: 0.4,
+  },
+  jokerCardSlottedGhost: {
+    opacity: 0,
   },
   slotNumber: {
     fontSize: 10,
@@ -2259,6 +2740,9 @@ const styles = StyleSheet.create({
   draggingCardSlot: {
     zIndex: 6,
   },
+  draggingJokerSlot: {
+    zIndex: 8,
+  },
   handCard: {
     flex: 1,
     backgroundColor: '#e9eff8',
@@ -2291,6 +2775,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.32,
     shadowRadius: 14,
     elevation: 6,
+  },
+  handCardSlottedGhost: {
+    opacity: 0,
   },
   emptyCard: {
     opacity: 0.45,
@@ -2375,6 +2862,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'column',
+    gap: 8,
+    minHeight: 72,
   },
   bottomUseZoneWide: {
     flex: 1,
@@ -2533,6 +3024,69 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '900',
     color: '#0d63c9',
+  },
+  settlementStageCard: {
+    borderRadius: 14,
+    backgroundColor: '#ebf1f8',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  settlementStageTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#102033',
+  },
+  settlementStageMeta: {
+    fontSize: 12,
+    color: '#516173',
+  },
+  settlementRows: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 6,
+  },
+  settlementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  settlementRowHighlight: {
+    marginTop: 2,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e2edf7',
+  },
+  settlementRowLabel: {
+    fontSize: 13,
+    color: '#516173',
+    flex: 1,
+  },
+  settlementRowValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#102033',
+  },
+  settlementRowLabelStrong: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#102033',
+    flex: 1,
+  },
+  settlementRowValueStrong: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#0d63c9',
+  },
+  settlementDivider: {
+    height: 1,
+    backgroundColor: '#e2edf7',
+    marginVertical: 2,
   },
   rewardRow: {
     flexDirection: 'row',

@@ -12,6 +12,9 @@ import {
   getBoss,
   getHandStartBonus,
   getPurgeableCards,
+  getJoker,
+  getSellPriceHandCard,
+  getSellPriceJoker,
   movePlayedCardToDiscard,
   removeCardFromDeck,
   rerollDiceAt,
@@ -27,6 +30,7 @@ import {
   PurgeSource,
   RewardOption,
   ShopItem,
+  StageSettlementSummary,
 } from './types';
 
 const MAX_JOKERS = 5;
@@ -51,7 +55,7 @@ type HandState = {
   handRefreshes: number;
 };
 
-type Phase = 'playing' | 'reward' | 'shop' | 'purge' | 'victory' | 'defeat';
+type Phase = 'playing' | 'settlement' | 'reward' | 'shop' | 'purge' | 'victory' | 'defeat';
 
 type GameState = {
   phase: Phase;
@@ -65,12 +69,14 @@ type GameState = {
   purgeSource?: PurgeSource;
   message: string;
   lastScore?: LastScoringSummary;
+  settlement?: StageSettlementSummary;
 };
 
 const HANDS_PER_STAGE = 4;
 const ROLLS_PER_STAGE = 3;
 const STARTING_GOLD = 5;
 const TOTAL_ANTES = 8;
+
 
 const getStageDefinitionForProgress = (ante: number, stageIndex: number) => {
   const baseStage = STAGES[stageIndex];
@@ -404,32 +410,53 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
           ...baseProgress,
         };
         const stageRewardGold = currentStageDefinition.rewardGold;
+        const spareHands = remainingHands;
+        const spareRolls = currentState.stage.remainingRolls;
+        const efficiencyBonusGold = spareHands + spareRolls;
+        const goldAfter =
+          updatedState.gold + stageRewardGold + efficiencyBonusGold;
+        const isRunComplete =
+          currentState.stage.ante === TOTAL_ANTES &&
+          currentState.stage.stageIndex === STAGES.length - 1;
+
+        const pendingRewardOptions = isRunComplete
+          ? []
+          : createRewardOptions({ ownedJokers: currentState.jokers });
+
+        const settlement: StageSettlementSummary = {
+          ante: currentState.stage.ante,
+          stageIndex: currentState.stage.stageIndex,
+          stageName: currentStageDefinition.name,
+          targetScore: currentStageDefinition.targetScore,
+          spareHands,
+          spareRolls,
+          efficiencyGold: efficiencyBonusGold,
+          blindRewardGold: stageRewardGold,
+          handScoreGold: gainedGold,
+          goldBeforeHand: currentState.gold,
+          goldAfter,
+          isRunComplete,
+          pendingRewardOptions,
+        };
+
         const clearedStageState: GameState = {
           ...updatedState,
-          gold: updatedState.gold + stageRewardGold,
+          gold: goldAfter,
           stage: {
             ...updatedState.stage,
             currentScore: nextScore,
             remainingHands,
           },
-          message: `Ante ${currentState.stage.ante} ${currentStageDefinition.name} 클리어. 보상 골드 ${stageRewardGold}를 획득했습니다.`,
+          settlement,
+          rewardOptions: [],
+          message: isRunComplete
+            ? `Ante ${TOTAL_ANTES} Boss Blind 클리어. 정산을 확인한 뒤 런 완료 화면으로 이동합니다.`
+            : `${currentStageDefinition.name} 클리어. 정산을 확인한 뒤 보상을 선택하세요.`,
         };
-
-        if (
-          currentState.stage.ante === TOTAL_ANTES &&
-          currentState.stage.stageIndex === STAGES.length - 1
-        ) {
-          return {
-            ...clearedStageState,
-            phase: 'victory',
-            message: `Ante ${TOTAL_ANTES} Boss Blind까지 돌파했습니다. 이번 런을 완전히 클리어했습니다.`,
-          };
-        }
 
         return {
           ...clearedStageState,
-          phase: 'reward',
-          rewardOptions: createRewardOptions({ ownedJokers: currentState.jokers }),
+          phase: 'settlement',
         };
       }
 
@@ -654,8 +681,164 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
     setState(currentState => moveToNextStage(currentState));
   };
 
+  const continueFromSettlement = () => {
+    if (state.phase !== 'settlement' || !state.settlement) {
+      return;
+    }
+
+    setState(currentState => {
+      if (currentState.phase !== 'settlement' || !currentState.settlement) {
+        return currentState;
+      }
+
+      const { isRunComplete, pendingRewardOptions } = currentState.settlement;
+
+      if (isRunComplete) {
+        return {
+          ...currentState,
+          phase: 'victory',
+          settlement: undefined,
+          message: `런 완료! 최종 골드 ${currentState.gold}G`,
+        };
+      }
+
+      return {
+        ...currentState,
+        phase: 'reward',
+        settlement: undefined,
+        rewardOptions: pendingRewardOptions,
+        message: '보상을 선택하세요.',
+      };
+    });
+  };
+
   const restartRun = () => {
     setState(createInitialGameState(startingJokerId));
+  };
+
+  const sellHandCard = (handIndex: number) => {
+    if (state.phase !== 'playing') {
+      return;
+    }
+
+    setState(currentState => {
+      if (currentState.phase !== 'playing') {
+        return currentState;
+      }
+
+      const cardId = currentState.deck.hand[handIndex];
+      if (!cardId) {
+        return currentState;
+      }
+
+      const card = getActionCard(cardId);
+      const sellPrice = getSellPriceHandCard();
+      const nextHand = [...currentState.deck.hand];
+      nextHand.splice(handIndex, 1);
+
+      return {
+        ...currentState,
+        deck: {
+          ...currentState.deck,
+          hand: nextHand,
+        },
+        gold: currentState.gold + sellPrice,
+        message: `${card?.name ?? '카드'} 판매: +${sellPrice}G`,
+      };
+    });
+  };
+
+  const reorderArray = <T,>(items: T[], fromIndex: number, toIndex: number): T[] => {
+    if (fromIndex === toIndex || fromIndex < 0 || fromIndex >= items.length) {
+      return items;
+    }
+    const next = [...items];
+    const [moved] = next.splice(fromIndex, 1);
+    const insertAt = Math.max(0, Math.min(toIndex, next.length));
+    next.splice(insertAt, 0, moved);
+    return next;
+  };
+
+  const reorderHandCards = (fromIndex: number, toIndex: number) => {
+    if (state.phase !== 'playing') {
+      return;
+    }
+
+    setState(currentState => {
+      if (currentState.phase !== 'playing') {
+        return currentState;
+      }
+
+      const hand = currentState.deck.hand;
+      if (fromIndex < 0 || fromIndex >= hand.length || hand.length < 2) {
+        return currentState;
+      }
+
+      const nextHand = reorderArray(hand, fromIndex, toIndex);
+
+      return {
+        ...currentState,
+        deck: {
+          ...currentState.deck,
+          hand: nextHand,
+        },
+        message: '손패 순서를 바꿨습니다.',
+      };
+    });
+  };
+
+  const reorderJokers = (fromIndex: number, toIndex: number) => {
+    if (state.phase !== 'playing') {
+      return;
+    }
+
+    setState(currentState => {
+      if (currentState.phase !== 'playing') {
+        return currentState;
+      }
+
+      const ids = currentState.jokers;
+      if (fromIndex < 0 || fromIndex >= ids.length || ids.length < 2) {
+        return currentState;
+      }
+
+      const nextJokers = reorderArray(ids, fromIndex, toIndex);
+
+      return {
+        ...currentState,
+        jokers: nextJokers,
+        message: '조커 순서를 바꿨습니다.',
+      };
+    });
+  };
+
+  const sellJoker = (slotIndex: number) => {
+    if (state.phase !== 'playing') {
+      return;
+    }
+
+    setState(currentState => {
+      if (currentState.phase !== 'playing') {
+        return currentState;
+      }
+
+      const jokerId = currentState.jokers[slotIndex];
+      if (!jokerId) {
+        return currentState;
+      }
+
+      const jokerDef = getJoker(jokerId);
+      const price = jokerDef ? getSellPriceJoker(jokerDef.rarity) : getSellPriceHandCard();
+      const nextJokers = [...currentState.jokers];
+      nextJokers.splice(slotIndex, 1);
+
+      return {
+        ...currentState,
+        jokers: nextJokers,
+        gold: currentState.gold + price,
+        message: `${jokerDef?.name ?? '조커'} 판매: +${price}G`,
+      };
+    });
   };
 
   return {
@@ -672,11 +855,16 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
     rerollSelectedDice,
     refreshHandCards,
     playCard,
+    sellHandCard,
+    reorderHandCards,
+    reorderJokers,
+    sellJoker,
     submitHand,
     applyReward,
     buyShopItem,
     removeDeckCard,
     continueFromShop,
+    continueFromSettlement,
     restartRun,
   };
 };
