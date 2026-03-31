@@ -21,6 +21,7 @@ import { ActionCardRarity, JokerDefinition, JokerRarity } from '../game/types';
 
 const LOBBY_LOGO = require('../assets/etc/logo.png');
 const JOKER_LIST_BTN = require('../assets/etc/joker-card-list.png');
+const HAND_CARD_LIST_BTN = require('../assets/etc/hand-card-list-button.png');
 const START_BUTTON_IMG = require('../assets/etc/start.png');
 
 const MODE_OPTIONS: Array<{ id: DieMode; title: string; subtitle: string; available: boolean }> = [
@@ -460,10 +461,10 @@ export function LobbyScreen({
               <View style={styles.frameFooterTopRow}>
                 <Pressable
                   onPress={() => setShowHandCardGuide(true)}
-                  style={styles.footerGuideButton}
+                  style={styles.handCardListButton}
                   hitSlop={10}
                   accessibilityLabel="핸드 카드 목록">
-                  <Text style={styles.footerGuideButtonText}>핸드 카드</Text>
+                  <Image source={HAND_CARD_LIST_BTN} style={styles.handCardListButtonImage} />
                 </Pressable>
                 <Pressable
                   onPress={() => setShowJokerGuide(true)}
@@ -843,19 +844,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  footerGuideButton: {
+  handCardListButton: {
+    height: 60,
     marginRight: 2,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#9ab7d0',
-    backgroundColor: '#f0f7ff',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  footerGuideButtonText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#2e5472',
+  handCardListButtonImage: {
+    width: 70,
+    height: 85,
   },
   jokerListButton: {
     // width: 40,
@@ -1476,12 +1473,12 @@ const styles = StyleSheet.create({
     width: '24%',
     aspectRatio: 0.68,
     borderRadius: 10,
-    borderWidth: 1,
+    borderWidth: 2,
     borderColor: '#c4dff3',
     backgroundColor: '#ffffff',
     marginBottom: 8,
     marginRight: '1.33%',
-    padding: 2,
+    padding: 3,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
@@ -1522,8 +1519,8 @@ const styles = StyleSheet.create({
   jokerDetail: {
     flex: 0,
     borderRadius: 12,
-    borderWidth: 1,
-    borderTopWidth: 4,
+    borderWidth: 2,
+    borderTopWidth: 6,
     borderColor: '#c4dff3',
     backgroundColor: '#ffffff',
     padding: 10,

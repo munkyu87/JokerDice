@@ -1702,12 +1702,17 @@ export function RogueRollScreen({
                         isSelected ? styles.rewardCardSelected : undefined,
                       ]}>
                       {previewImage ? (
-                        <Image source={previewImage} style={styles.rewardCardImage} resizeMode="cover" />
+                        <View style={styles.rewardCardArtFrame}>
+                          <Image source={previewImage} style={styles.rewardCardImage} resizeMode="cover" />
+                        </View>
                       ) : actionPreviewImage ? (
-                        <Image source={actionPreviewImage} style={styles.rewardCardImage} resizeMode="cover" />
+                        <View style={styles.rewardCardArtFrame}>
+                          <Image source={actionPreviewImage} style={styles.rewardCardImage} resizeMode="cover" />
+                        </View>
                       ) : actionCard && actionTheme ? (
                         <View
                           style={[
+                            styles.rewardCardArtFrame,
                             styles.rewardCardFace,
                             {
                               backgroundColor: actionTheme.surface,
@@ -1804,12 +1809,17 @@ export function RogueRollScreen({
                         isSelected ? styles.rewardCardSelected : undefined,
                       ]}>
                       {jokerPreview ? (
-                        <Image source={jokerPreview} style={styles.rewardCardImage} resizeMode="cover" />
+                        <View style={styles.rewardCardArtFrame}>
+                          <Image source={jokerPreview} style={styles.rewardCardImage} resizeMode="cover" />
+                        </View>
                       ) : actionPreviewImage ? (
-                        <Image source={actionPreviewImage} style={styles.rewardCardImage} resizeMode="cover" />
+                        <View style={styles.rewardCardArtFrame}>
+                          <Image source={actionPreviewImage} style={styles.rewardCardImage} resizeMode="cover" />
+                        </View>
                       ) : item.type === 'card' && actionCard && actionTheme ? (
                         <View
                           style={[
+                            styles.rewardCardArtFrame,
                             styles.rewardCardFace,
                             {
                               backgroundColor: actionTheme.surface,
@@ -2306,7 +2316,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderWidth: 1,
+    borderWidth: 2,
     borderColor: '#cad9eb',
     gap: 4,
     overflow: 'hidden',
@@ -2325,7 +2335,7 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   jokerCardActive: {
-    borderWidth: 2,
+    borderWidth: 3,
     shadowOpacity: 0.24,
     shadowRadius: 8,
     shadowOffset: {
@@ -3213,10 +3223,15 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 3,
   },
-  rewardCardImage: {
+  rewardCardArtFrame: {
     width: '100%',
     aspectRatio: ACTION_CARD_LIST_ASPECT_RATIO,
     borderRadius: 10,
+    overflow: 'hidden',
+  },
+  rewardCardImage: {
+    width: '100%',
+    height: '100%',
   },
   rewardCardPlaceholder: {
     width: '100%',
