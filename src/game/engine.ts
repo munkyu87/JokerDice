@@ -1,6 +1,7 @@
 import { ACTION_CARDS, BOSSES, JOKERS, STARTING_DECK } from './data';
 import {
   ActionCardDefinition,
+  ActionCardRarity,
   DeckState,
   DiceRoll,
   DiceValue,
@@ -15,12 +16,63 @@ import {
   ShopItem,
 } from './types';
 
-/** 상점에서 핸드 카드·조커를 살 때 기준가 (판매가는 항상 이보다 낮게) */
+/** 일반 등급 핸드 카드 상점가 (참고용) */
 export const SHOP_HAND_CARD_PRICE = 3;
 export const SHOP_JOKER_PRICE = 6;
 
-/** 핸드 카드 1장 판매가 (구매가보다 낮음) */
-export const getSellPriceHandCard = (): number => Math.max(1, SHOP_HAND_CARD_PRICE - 1);
+const ACTION_CARD_RARITY_WEIGHT: Record<ActionCardRarity, number> = {
+  common: 48,
+  uncommon: 28,
+  rare: 14,
+  legendary: 4,
+};
+
+/** 등급별 상점 구매가 */
+export const getShopHandCardPrice = (rarity: ActionCardRarity): number => {
+  const byRarity: Record<ActionCardRarity, number> = {
+    common: 3,
+    uncommon: 4,
+    rare: 6,
+    legendary: 9,
+  };
+  return byRarity[rarity];
+};
+
+/** 핸드 카드 1장 판매가 — 등급 반영, 해당 등급 상점가 미만 */
+export const getSellPriceHandCard = (rarity: ActionCardRarity): number => {
+  const byRarity: Record<ActionCardRarity, number> = {
+    common: 1,
+    uncommon: 2,
+    rare: 3,
+    legendary: 4,
+  };
+  return Math.min(byRarity[rarity], getShopHandCardPrice(rarity) - 1);
+};
+
+/** 보상·상점에서 중복 없이, 등급 가중치로 액션 카드를 고릅니다. */
+export const pickDistinctActionCards = (count: number, rng: () => number): ActionCardDefinition[] => {
+  const pool = [...ACTION_CARDS];
+  const result: ActionCardDefinition[] = [];
+
+  while (result.length < count && pool.length > 0) {
+    const totalWeight = pool.reduce((sum, card) => sum + ACTION_CARD_RARITY_WEIGHT[card.rarity], 0);
+    let roll = rng() * totalWeight;
+    let pickedIndex = pool.length - 1;
+
+    for (let i = 0; i < pool.length; i += 1) {
+      roll -= ACTION_CARD_RARITY_WEIGHT[pool[i].rarity];
+      if (roll <= 0) {
+        pickedIndex = i;
+        break;
+      }
+    }
+
+    result.push(pool[pickedIndex]);
+    pool.splice(pickedIndex, 1);
+  }
+
+  return result;
+};
 
 /** 조커 1장 판매가 — 등급 반영, 상점 구매가(6G) 미만 */
 export const getSellPriceJoker = (rarity: JokerRarity): number => {
@@ -373,7 +425,7 @@ export const createRewardOptions = ({
     JOKERS.filter(joker => !ownedJokers.includes(joker.id)),
     rng,
   );
-  const cardPool = shuffle(ACTION_CARDS, rng);
+  const pickedCards = pickDistinctActionCards(1, rng);
   const options: RewardOption[] = [];
 
   if (jokerPool[0]) {
@@ -386,13 +438,13 @@ export const createRewardOptions = ({
     });
   }
 
-  if (cardPool[0]) {
+  if (pickedCards[0]) {
     options.push({
-      id: `reward-card-${cardPool[0].id}`,
+      id: `reward-card-${pickedCards[0].id}`,
       type: 'card',
-      cardId: cardPool[0].id,
-      title: cardPool[0].name,
-      description: cardPool[0].description,
+      cardId: pickedCards[0].id,
+      title: pickedCards[0].name,
+      description: pickedCards[0].description,
     });
   }
 
@@ -434,7 +486,6 @@ export const createShopItems = ({
     JOKERS.filter(joker => !ownedJokers.includes(joker.id)),
     rng,
   );
-  const cardPool = shuffle(ACTION_CARDS, rng);
   const utilityItems = shuffle<ShopItem>(
     [
       {
@@ -475,18 +526,17 @@ export const createShopItems = ({
     });
   }
 
-  for (let i = 0; i < maxCards; i += 1) {
-    const card = cardPool[i];
-    if (!card) break;
+  const shopCards = pickDistinctActionCards(maxCards, rng);
+  shopCards.forEach(card => {
     items.push({
       id: `shop-card-${card.id}`,
       type: 'card',
       cardId: card.id,
       title: card.name,
       description: card.description,
-      price: SHOP_HAND_CARD_PRICE,
+      price: getShopHandCardPrice(card.rarity),
     });
-  }
+  });
 
   for (let i = 0; i < utilityItems.length && items.length < desiredCount; i += 1) {
     items.push(utilityItems[i]);

@@ -23,11 +23,15 @@ export type BuildTag =
 export type JokerTrigger = 'onHandStart' | 'beforeScore' | 'afterScore';
 export type JokerRarity = 'common' | 'uncommon' | 'rare' | 'legendary';
 
+/** 액션 카드 등급 — 조커와 동일한 4단계 */
+export type ActionCardRarity = JokerRarity;
+
 export type CardPlayResult =
   | {
       ok: true;
       dice: DiceRoll;
       message: string;
+      negativeJokerId?: string;
     }
   | {
       ok: false;
@@ -38,6 +42,7 @@ export type ActionCardDefinition = {
   id: string;
   name: string;
   description: string;
+  rarity: ActionCardRarity;
   tags: BuildTag[];
   apply: (params: CardPlayParams) => CardPlayResult;
 };
@@ -46,6 +51,9 @@ export type CardPlayParams = {
   dice: DiceRoll;
   selectedDice: number[];
   rollDiceAt: (dice: DiceRoll, indices: number[]) => DiceRoll;
+  jokerIds: string[];
+  negativeJokerIds: string[];
+  rng: () => number;
 };
 
 export type JokerEffectContext = {

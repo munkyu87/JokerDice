@@ -37,6 +37,12 @@ const MAX_JOKERS = 5;
 const MAX_CARDS_PER_HAND = 2;
 const BASE_HAND_DRAW = 3;
 
+const getOwnedNegativeJokerIds = (jokerIds: string[], negativeJokerIds: string[]) =>
+  negativeJokerIds.filter(jokerId => jokerIds.includes(jokerId));
+
+const getOccupiedJokerSlots = (jokerIds: string[], negativeJokerIds: string[]) =>
+  Math.max(0, jokerIds.length - getOwnedNegativeJokerIds(jokerIds, negativeJokerIds).length);
+
 type StageState = {
   ante: number;
   stageIndex: number;
@@ -61,6 +67,7 @@ type GameState = {
   phase: Phase;
   deck: DeckState;
   jokers: string[];
+  negativeJokerIds: string[];
   gold: number;
   stage: StageState;
   hand: HandState;
@@ -151,6 +158,7 @@ const createInitialGameState = (
     phase: 'playing',
     deck: opening.deck,
     jokers: [...startingJokers],
+    negativeJokerIds: [],
     gold: STARTING_GOLD,
     stage: {
       ante: 1,
@@ -315,6 +323,9 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
         dice: currentState.hand.dice,
         selectedDice: currentState.hand.selectedDice,
         rollDiceAt: (dice, indices) => rerollDiceAt(dice, indices),
+        jokerIds: currentState.jokers,
+        negativeJokerIds: currentState.negativeJokerIds,
+        rng: Math.random,
       });
 
       if (!result.ok) {
@@ -324,16 +335,31 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
         };
       }
 
+      const nextNegativeJokerIds = result.negativeJokerId
+        ? Array.from(
+            new Set(
+              getOwnedNegativeJokerIds(currentState.jokers, [
+                ...currentState.negativeJokerIds,
+                result.negativeJokerId,
+              ]),
+            ),
+          )
+        : currentState.negativeJokerIds;
+      const negativeJokerName = result.negativeJokerId ? getJoker(result.negativeJokerId)?.name : undefined;
+
       return {
         ...currentState,
         deck: movePlayedCardToDiscard(currentState.deck, handIndex),
+        negativeJokerIds: nextNegativeJokerIds,
         hand: {
           ...currentState.hand,
           dice: result.dice,
           selectedDice: [],
           cardsPlayed: currentState.hand.cardsPlayed + 1,
         },
-        message: result.message,
+        message: negativeJokerName
+          ? `${negativeJokerName} 조커가 네거티브가 되어 슬롯을 차지하지 않게 되었습니다.`
+          : result.message,
       };
     });
   };
@@ -531,7 +557,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
       };
 
       if (reward.type === 'joker') {
-        if (currentState.jokers.length >= MAX_JOKERS) {
+        if (getOccupiedJokerSlots(currentState.jokers, currentState.negativeJokerIds) >= MAX_JOKERS) {
           nextState = {
             ...nextState,
             message: '조커 슬롯이 가득 차서 이번 보상은 골드로 대체됩니다.',
@@ -615,7 +641,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
       }
 
       if (item.type === 'joker') {
-        if (currentState.jokers.length >= MAX_JOKERS) {
+        if (getOccupiedJokerSlots(currentState.jokers, currentState.negativeJokerIds) >= MAX_JOKERS) {
           return {
             ...currentState,
             message: '조커 슬롯이 가득 찼습니다.',
@@ -732,7 +758,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
       }
 
       const card = getActionCard(cardId);
-      const sellPrice = getSellPriceHandCard();
+      const sellPrice = getSellPriceHandCard(card?.rarity ?? 'common');
       const nextHand = [...currentState.deck.hand];
       nextHand.splice(handIndex, 1);
 
@@ -828,13 +854,14 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
       }
 
       const jokerDef = getJoker(jokerId);
-      const price = jokerDef ? getSellPriceJoker(jokerDef.rarity) : getSellPriceHandCard();
+      const price = jokerDef ? getSellPriceJoker(jokerDef.rarity) : getSellPriceHandCard('common');
       const nextJokers = [...currentState.jokers];
       nextJokers.splice(slotIndex, 1);
 
       return {
         ...currentState,
         jokers: nextJokers,
+        negativeJokerIds: currentState.negativeJokerIds.filter(id => id !== jokerId),
         gold: currentState.gold + price,
         message: `${jokerDef?.name ?? '조커'} 판매: +${price}G`,
       };

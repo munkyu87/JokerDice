@@ -21,7 +21,7 @@ import {
   getJoker,
   getSellPriceHandCard,
   getSellPriceJoker,
-  SHOP_HAND_CARD_PRICE,
+  getShopHandCardPrice,
   SHOP_JOKER_PRICE,
 } from '../game/engine';
 import { getActionCardPreviewImage } from '../game/actionCardPreviewImages';
@@ -195,9 +195,17 @@ const DropZoneHandPreview = ({ cardId }: { cardId: string }) => {
 
   const img = getActionCardPreviewImage(cardId);
   const theme = getActionTheme(card.tags);
+  const rarityTheme = JOKER_RARITY_COLORS[card.rarity];
 
   return (
-    <View style={[styles.dropZoneMiniCard, { borderColor: theme.frame, backgroundColor: theme.surface }]}>
+    <View
+      style={[
+        styles.dropZoneMiniCard,
+        {
+          borderColor: rarityTheme?.frame ?? theme.frame,
+          backgroundColor: theme.surface,
+        },
+      ]}>
       {img ? (
         <Image source={img} style={styles.dropZoneMiniCardImage} resizeMode="cover" />
       ) : (
@@ -342,6 +350,10 @@ export function RogueRollScreen({
   const selectedCardId =
     selectedCardIndex !== null ? state.deck.hand[selectedCardIndex] : undefined;
   const selectedCard = selectedCardId ? getActionCard(selectedCardId) : undefined;
+  const draggingHandCardDef =
+    draggingCardIndex !== null && state.deck.hand[draggingCardIndex]
+      ? getActionCard(state.deck.hand[draggingCardIndex])
+      : undefined;
   const selectedJokerId =
     selectedJokerIndex !== null ? state.jokers[selectedJokerIndex] : undefined;
   const selectedJoker = selectedJokerId ? getJoker(selectedJokerId) : undefined;
@@ -354,7 +366,12 @@ export function RogueRollScreen({
       ? state.shopItems.find(item => item.id === selectedShopItemId) ?? null
       : null;
   const canBuySelectedShopItem = !!selectedShopItem && state.gold >= selectedShopItem.price;
-  const jokerSlotCount = Math.max(5, state.jokers.length);
+  const negativeJokerIds = useMemo(
+    () => state.negativeJokerIds.filter(jokerId => state.jokers.includes(jokerId)),
+    [state.jokers, state.negativeJokerIds],
+  );
+  const occupiedJokerSlots = Math.max(0, state.jokers.length - negativeJokerIds.length);
+  const jokerSlotCount = Math.max(5 + negativeJokerIds.length, state.jokers.length);
   const blindTypeLabel = stageDefinition.name;
   const blindRuleText = boss ? boss.description : undefined;
   const dismissActiveTooltip = useCallback(() => {
@@ -916,9 +933,10 @@ export function RogueRollScreen({
             {isDraggingOverSellZone && draggingJokerIndex !== null && state.jokers[draggingJokerIndex] ? (
               <DropZoneJokerPreview jokerId={state.jokers[draggingJokerIndex]} />
             ) : null}
-            {draggingCardIndex !== null && state.deck.hand[draggingCardIndex] ? (
+            {draggingHandCardDef ? (
               <Text style={styles.topSellZonePriceHint}>
-                핸드 카드 판매 +{getSellPriceHandCard()}G · 상점 구매 {SHOP_HAND_CARD_PRICE}G
+                핸드 카드 판매 +{getSellPriceHandCard(draggingHandCardDef.rarity)}G · 상점 유사 등급{' '}
+                {getShopHandCardPrice(draggingHandCardDef.rarity)}G
               </Text>
             ) : draggingJokerIndex !== null && state.jokers[draggingJokerIndex] ? (
               <Text style={styles.topSellZonePriceHint}>
@@ -1011,7 +1029,10 @@ export function RogueRollScreen({
         <View style={[styles.jokerPanel, isCompact ? styles.jokerPanelCompact : undefined]}>
           <View style={styles.panelHeader}>
             <Text style={styles.panelLabel}>JOKERS</Text>
-            <Text style={styles.deckCounts}>{state.jokers.length}/5</Text>
+            <Text style={styles.deckCounts}>
+              {occupiedJokerSlots}/5
+              {negativeJokerIds.length > 0 ? ` · NEG ${negativeJokerIds.length}` : ''}
+            </Text>
           </View>
 
           <View style={styles.jokerRowWrap}>
@@ -1037,6 +1058,7 @@ export function RogueRollScreen({
                 <Text style={styles.cardTooltipBody}>{selectedJoker.description}</Text>
                 <Text style={styles.jokerTooltipMeta}>
                   {JOKER_RARITY_LABELS[selectedJoker.rarity]} · {JOKER_TRIGGER_LABELS[selectedJoker.trigger]}
+                  {negativeJokerIds.includes(selectedJoker.id) ? ' · 네거티브' : ''}
                   {activeJokers.disabledJokerIds.includes(selectedJoker.id) ? ' · 현재 비활성' : ''}
                 </Text>
                 <View style={styles.jokerTooltipArrow} />
@@ -1047,6 +1069,7 @@ export function RogueRollScreen({
             {Array.from({ length: jokerSlotCount }, (_, slotIndex) => {
               const jokerId = state.jokers[slotIndex];
               const joker = jokerId ? getJoker(jokerId) : undefined;
+              const isNegative = negativeJokerIds.includes(jokerId ?? '');
               const isDisabled = activeJokers.disabledJokerIds.includes(jokerId ?? '');
               const isSelected = selectedJokerIndex === slotIndex;
               const theme = getJokerTheme(joker?.tags);
@@ -1112,6 +1135,7 @@ export function RogueRollScreen({
                       isSelected ? styles.jokerCardActive : undefined,
                       isSelected && rarityTheme ? { borderColor: rarityTheme.frame } : undefined,
                       isSelected && rarityTheme ? { shadowColor: rarityTheme.glow } : undefined,
+                      isNegative ? styles.negativeJokerCard : undefined,
                       isDisabled ? styles.jokerDisabled : undefined,
                       slotJokerInSell ? styles.jokerCardSlottedGhost : undefined,
                     ]}>
@@ -1160,6 +1184,11 @@ export function RogueRollScreen({
                             </View>
                           </>
                         )}
+                        {isNegative ? (
+                          <View style={styles.negativeJokerBadge}>
+                            <Text style={styles.negativeJokerBadgeText}>NEG</Text>
+                          </View>
+                        ) : null}
                       </>
                     ) : (
                       <View style={styles.emptyJokerSlot} />
@@ -1310,6 +1339,7 @@ export function RogueRollScreen({
                   },
                 ]}>
                 <Text style={styles.cardTooltipTitle}>{selectedCard.name}</Text>
+                <Text style={styles.cardTooltipRarity}>{JOKER_RARITY_LABELS[selectedCard.rarity]}</Text>
                 <Text style={styles.cardTooltipBody}>{selectedCard.description}</Text>
                 <View style={styles.cardTooltipArrow} />
               </Animated.View>
@@ -1322,6 +1352,7 @@ export function RogueRollScreen({
               const actionPreviewImage = card ? getActionCardPreviewImage(card.id) : undefined;
               const isPreviewing = selectedCardIndex === index;
               const theme = getActionTheme(card?.tags);
+              const actionRarityTheme = card ? JOKER_RARITY_COLORS[card.rarity] : undefined;
               const badgeLabel = card ? TAG_LABELS[getPrimaryTag(card.tags)] : 'A';
               const animation = cardSelectAnimationsRef.current[index];
               const dragAnimation = cardDragAnimationsRef.current[index];
@@ -1387,7 +1418,7 @@ export function RogueRollScreen({
                       card
                         ? {
                             backgroundColor: theme.surface,
-                            borderColor: theme.frame,
+                            borderColor: actionRarityTheme?.frame ?? theme.frame,
                           }
                         : undefined,
                       isCompact ? styles.handCardCompact : undefined,
@@ -1549,11 +1580,15 @@ export function RogueRollScreen({
                 <Text style={styles.deckListSectionTitle}>{section.title}</Text>
                 {section.cards.length > 0 ? (
                   <View style={styles.deckListItems}>
-                    {section.cards.map((cardId, index) => (
-                      <Text key={`${section.title}-${cardId}-${index}`} style={styles.deckListItem}>
-                        {index + 1}. {getActionCard(cardId)?.name ?? cardId}
-                      </Text>
-                    ))}
+                    {section.cards.map((cardId, index) => {
+                      const deckCard = getActionCard(cardId);
+                      return (
+                        <Text key={`${section.title}-${cardId}-${index}`} style={styles.deckListItem}>
+                          {index + 1}. {deckCard?.name ?? cardId}
+                          {deckCard ? ` · ${JOKER_RARITY_LABELS[deckCard.rarity]}` : ''}
+                        </Text>
+                      );
+                    })}
                   </View>
                 ) : (
                   <Text style={styles.deckListEmpty}>비어 있음</Text>
@@ -1634,6 +1669,8 @@ export function RogueRollScreen({
                   const actionTheme = actionCard ? getActionTheme(actionCard.tags) : undefined;
                   const joker = option.type === 'joker' ? getJoker(option.jokerId) : undefined;
                   const rarityTheme = joker ? JOKER_RARITY_COLORS[joker.rarity] : undefined;
+                  const actionRarityTheme =
+                    option.type === 'card' && actionCard ? JOKER_RARITY_COLORS[actionCard.rarity] : undefined;
                   return (
                     <Pressable
                       key={option.id}
@@ -1646,6 +1683,12 @@ export function RogueRollScreen({
                         option.type === 'joker' && rarityTheme ? { borderColor: rarityTheme.frame } : undefined,
                         option.type === 'joker' && isSelected && rarityTheme
                           ? { shadowColor: rarityTheme.frame, backgroundColor: '#e6f0ff' }
+                          : undefined,
+                        option.type === 'card' && actionRarityTheme
+                          ? { borderColor: actionRarityTheme.frame }
+                          : undefined,
+                        option.type === 'card' && isSelected && actionRarityTheme
+                          ? { shadowColor: actionRarityTheme.frame, backgroundColor: '#e6f0ff' }
                           : undefined,
                         isSelected ? styles.rewardCardSelected : undefined,
                       ]}>
@@ -1728,6 +1771,8 @@ export function RogueRollScreen({
                   const actionTheme = actionCard ? getActionTheme(actionCard.tags) : undefined;
                   const joker = item.type === 'joker' ? getJoker(item.jokerId) : undefined;
                   const rarityTheme = joker ? JOKER_RARITY_COLORS[joker.rarity] : undefined;
+                  const actionRarityTheme =
+                    item.type === 'card' && actionCard ? JOKER_RARITY_COLORS[actionCard.rarity] : undefined;
                   return (
                     <Pressable
                       key={item.id}
@@ -1740,6 +1785,12 @@ export function RogueRollScreen({
                         item.type === 'joker' && rarityTheme ? { borderColor: rarityTheme.frame } : undefined,
                         item.type === 'joker' && isSelected && rarityTheme
                           ? { shadowColor: rarityTheme.frame, backgroundColor: '#e6f0ff' }
+                          : undefined,
+                        item.type === 'card' && actionRarityTheme
+                          ? { borderColor: actionRarityTheme.frame }
+                          : undefined,
+                        item.type === 'card' && isSelected && actionRarityTheme
+                          ? { shadowColor: actionRarityTheme.frame, backgroundColor: '#e6f0ff' }
                           : undefined,
                         isSelected ? styles.rewardCardSelected : undefined,
                       ]}>
@@ -2274,6 +2325,9 @@ const styles = StyleSheet.create({
     },
     elevation: 4,
   },
+  negativeJokerCard: {
+    borderStyle: 'dashed',
+  },
   jokerDisabled: {
     opacity: 0.4,
   },
@@ -2410,6 +2464,23 @@ const styles = StyleSheet.create({
   jokerArtOverlay: {
     ...StyleSheet.absoluteFillObject,
     // backgroundColor: 'rgba(15, 18, 30, 0.14)',
+  },
+  negativeJokerBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    backgroundColor: 'rgba(15, 23, 42, 0.82)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
+  },
+  negativeJokerBadgeText: {
+    fontSize: 8,
+    fontWeight: '900',
+    color: '#f8fafc',
+    letterSpacing: 0.4,
   },
   boardPanel: {
     flex: 1.18,
@@ -2714,6 +2785,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     color: '#173450',
+  },
+  cardTooltipRarity: {
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#5f7f9a',
   },
   cardTooltipBody: {
     marginTop: 6,

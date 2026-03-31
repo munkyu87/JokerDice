@@ -16,6 +16,7 @@ export const ACTION_CARDS: ActionCardDefinition[] = [
     id: 'precision_reroll',
     name: 'Precision Reroll',
     description: '선택한 주사위를 무료로 다시 굴립니다.',
+    rarity: 'common',
     tags: ['consistency'],
     apply: ({ dice, selectedDice, rollDiceAt }) => {
       if (selectedDice.length === 0) {
@@ -30,29 +31,10 @@ export const ACTION_CARDS: ActionCardDefinition[] = [
     },
   },
   {
-    id: 'loaded_six',
-    name: 'Loaded Six',
-    description: '선택한 주사위 1개를 6으로 바꿉니다.',
-    tags: ['high'],
-    apply: ({ dice, selectedDice }) => {
-      if (selectedDice.length !== 1) {
-        return { ok: false, message: 'Loaded Six는 주사위 1개를 정확히 선택해야 합니다.' };
-      }
-
-      const nextDice = [...dice];
-      nextDice[selectedDice[0]] = 6;
-
-      return {
-        ok: true,
-        dice: nextDice as typeof dice,
-        message: '선택한 주사위를 6으로 고정했습니다.',
-      };
-    },
-  },
-  {
     id: 'raise_all',
     name: 'Raise All',
     description: '모든 주사위를 +1 올립니다. 최대값은 6입니다.',
+    rarity: 'common',
     tags: ['high', 'consistency'],
     apply: ({ dice }) => ({
       ok: true,
@@ -61,9 +43,99 @@ export const ACTION_CARDS: ActionCardDefinition[] = [
     }),
   },
   {
+    id: 'sink_all',
+    name: 'Sink All',
+    description: '모든 주사위를 -1 내립니다. 최소값은 1입니다.',
+    rarity: 'common',
+    tags: ['consistency'],
+    apply: ({ dice }) => ({
+      ok: true,
+      dice: dice.map(value => Math.max(1, value - 1)) as typeof dice,
+      message: '모든 주사위가 1씩 감소했습니다.',
+    }),
+  },
+  {
+    id: 'nudge_up',
+    name: 'Nudge Up',
+    description: '선택한 주사위 1개를 +1 올립니다. 최대값은 6입니다.',
+    rarity: 'common',
+    tags: ['high'],
+    apply: ({ dice, selectedDice }) => {
+      if (selectedDice.length !== 1) {
+        return { ok: false, message: '주사위 1개를 정확히 선택해야 합니다.' };
+      }
+      const nextDice = [...dice];
+      const i = selectedDice[0];
+      nextDice[i] = Math.min(6, nextDice[i] + 1) as (typeof nextDice)[number];
+      return {
+        ok: true,
+        dice: nextDice as typeof dice,
+        message: '선택한 주사위를 1 올렸습니다.',
+      };
+    },
+  },
+  {
+    id: 'nudge_down',
+    name: 'Nudge Down',
+    description: '선택한 주사위 1개를 -1 내립니다. 최소값은 1입니다.',
+    rarity: 'common',
+    tags: ['consistency'],
+    apply: ({ dice, selectedDice }) => {
+      if (selectedDice.length !== 1) {
+        return { ok: false, message: '주사위 1개를 정확히 선택해야 합니다.' };
+      }
+      const nextDice = [...dice];
+      const i = selectedDice[0];
+      nextDice[i] = Math.max(1, nextDice[i] - 1) as (typeof nextDice)[number];
+      return {
+        ok: true,
+        dice: nextDice as typeof dice,
+        message: '선택한 주사위를 1 내렸습니다.',
+      };
+    },
+  },
+  {
+    id: 'anchor_one',
+    name: 'Anchor One',
+    description: '선택한 주사위 1개를 1로 고정합니다.',
+    rarity: 'common',
+    tags: ['sequence'],
+    apply: ({ dice, selectedDice }) => {
+      if (selectedDice.length !== 1) {
+        return { ok: false, message: '주사위 1개를 정확히 선택해야 합니다.' };
+      }
+      const nextDice = [...dice];
+      nextDice[selectedDice[0]] = 1;
+      return {
+        ok: true,
+        dice: nextDice as typeof dice,
+        message: '선택한 주사위를 1로 고정했습니다.',
+      };
+    },
+  },
+  {
+    id: 'smallest_bump',
+    name: 'Smallest Bump',
+    description: '가장 낮은 숫자 주사위 1개를 +1 올립니다. 동률이면 앞쪽 슬롯이 우선입니다.',
+    rarity: 'common',
+    tags: ['consistency'],
+    apply: ({ dice }) => {
+      const minVal = Math.min(...dice);
+      const idx = dice.findIndex(v => v === minVal);
+      const nextDice = [...dice];
+      nextDice[idx] = Math.min(6, minVal + 1) as (typeof nextDice)[number];
+      return {
+        ok: true,
+        dice: nextDice as typeof dice,
+        message: '가장 낮은 주사위를 1 올렸습니다.',
+      };
+    },
+  },
+  {
     id: 'mirror_high',
     name: 'Mirror High',
     description: '선택한 주사위 1개를 현재 최고 숫자로 복사합니다.',
+    rarity: 'uncommon',
     tags: ['set'],
     apply: ({ dice, selectedDice }) => {
       if (selectedDice.length !== 1) {
@@ -82,9 +154,30 @@ export const ACTION_CARDS: ActionCardDefinition[] = [
     },
   },
   {
+    id: 'mirror_low',
+    name: 'Mirror Low',
+    description: '선택한 주사위 1개를 현재 최저 숫자로 맞춥니다.',
+    rarity: 'uncommon',
+    tags: ['set'],
+    apply: ({ dice, selectedDice }) => {
+      if (selectedDice.length !== 1) {
+        return { ok: false, message: '주사위 1개를 정확히 선택해야 합니다.' };
+      }
+      const lowest = Math.min(...dice);
+      const nextDice = [...dice];
+      nextDice[selectedDice[0]] = lowest as (typeof nextDice)[number];
+      return {
+        ok: true,
+        dice: nextDice as typeof dice,
+        message: `선택한 주사위를 최저 숫자 ${lowest}(으)로 맞췄습니다.`,
+      };
+    },
+  },
+  {
     id: 'even_polish',
     name: 'Even Polish',
     description: '선택한 홀수 주사위를 다음 짝수로 보정합니다. 선택이 없으면 모든 홀수에 적용됩니다.',
+    rarity: 'uncommon',
     tags: ['even', 'consistency'],
     apply: ({ dice, selectedDice }) => {
       const targetIndices = selectedDice.length > 0 ? selectedDice : dice.map((_, index) => index);
@@ -101,6 +194,206 @@ export const ACTION_CARDS: ActionCardDefinition[] = [
         ok: true,
         dice: nextDice as typeof dice,
         message: '홀수 주사위를 짝수 쪽으로 보정했습니다.',
+      };
+    },
+  },
+  {
+    id: 'twin_peak',
+    name: 'Twin Peak',
+    description: '선택한 주사위 2개를 둘 다 더 높은 쪽 숫자로 맞춥니다.',
+    rarity: 'uncommon',
+    tags: ['set'],
+    apply: ({ dice, selectedDice }) => {
+      if (selectedDice.length !== 2) {
+        return { ok: false, message: '주사위 2개를 정확히 선택해야 합니다.' };
+      }
+      const [a, b] = selectedDice;
+      const peak = Math.max(dice[a], dice[b]);
+      const nextDice = [...dice];
+      nextDice[a] = peak as (typeof nextDice)[number];
+      nextDice[b] = peak as (typeof nextDice)[number];
+      return {
+        ok: true,
+        dice: nextDice as typeof dice,
+        message: `두 주사위를 ${peak}(으)로 맞췄습니다.`,
+      };
+    },
+  },
+  {
+    id: 'invert_faces',
+    name: 'Invert Faces',
+    description: '모든 주사위를 반전합니다. (1↔6, 2↔5, 3↔4)',
+    rarity: 'uncommon',
+    tags: ['sequence'],
+    apply: ({ dice }) => ({
+      ok: true,
+      dice: dice.map(v => (7 - v) as (typeof dice)[number]) as typeof dice,
+      message: '모든 주사위 면을 반전했습니다.',
+    }),
+  },
+  {
+    id: 'chaos_reroll',
+    name: 'Chaos Reroll',
+    description: '선택과 관계없이 전체 주사위를 무료로 다시 굴립니다.',
+    rarity: 'uncommon',
+    tags: ['consistency'],
+    apply: ({ dice, rollDiceAt }) => ({
+      ok: true,
+      dice: rollDiceAt(
+        dice,
+        dice.map((_, index) => index),
+      ),
+      message: '전체 주사위를 다시 굴렸습니다.',
+    }),
+  },
+  {
+    id: 'surge_die',
+    name: 'Surge Die',
+    description: '선택한 주사위 1개를 +2 올립니다. 최대값은 6입니다.',
+    rarity: 'uncommon',
+    tags: ['high'],
+    apply: ({ dice, selectedDice }) => {
+      if (selectedDice.length !== 1) {
+        return { ok: false, message: '주사위 1개를 정확히 선택해야 합니다.' };
+      }
+      const nextDice = [...dice];
+      const i = selectedDice[0];
+      nextDice[i] = Math.min(6, nextDice[i] + 2) as (typeof nextDice)[number];
+      return {
+        ok: true,
+        dice: nextDice as typeof dice,
+        message: '선택한 주사위를 2 올렸습니다.',
+      };
+    },
+  },
+  {
+    id: 'swap_pair',
+    name: 'Swap Pair',
+    description: '선택한 서로 다른 주사위 2개의 값을 맞바꿉니다.',
+    rarity: 'uncommon',
+    tags: ['set'],
+    apply: ({ dice, selectedDice }) => {
+      if (selectedDice.length !== 2) {
+        return { ok: false, message: '주사위 2개를 정확히 선택해야 합니다.' };
+      }
+      const [i, j] = selectedDice;
+      if (i === j) {
+        return { ok: false, message: '서로 다른 주사위 두 개를 선택해야 합니다.' };
+      }
+      const nextDice = [...dice];
+      const tmp = nextDice[i];
+      nextDice[i] = nextDice[j];
+      nextDice[j] = tmp as (typeof nextDice)[number];
+      return {
+        ok: true,
+        dice: nextDice as typeof dice,
+        message: '두 주사위 값을 맞바꿨습니다.',
+      };
+    },
+  },
+  {
+    id: 'loaded_six',
+    name: 'Loaded Six',
+    description: '선택한 주사위 1개를 6으로 바꿉니다.',
+    rarity: 'rare',
+    tags: ['high'],
+    apply: ({ dice, selectedDice }) => {
+      if (selectedDice.length !== 1) {
+        return { ok: false, message: 'Loaded Six는 주사위 1개를 정확히 선택해야 합니다.' };
+      }
+
+      const nextDice = [...dice];
+      nextDice[selectedDice[0]] = 6;
+
+      return {
+        ok: true,
+        dice: nextDice as typeof dice,
+        message: '선택한 주사위를 6으로 고정했습니다.',
+      };
+    },
+  },
+  {
+    id: 'boost_spike',
+    name: 'Boost Spike',
+    description: '모든 주사위를 +2 올립니다. 최대값은 6입니다.',
+    rarity: 'rare',
+    tags: ['high'],
+    apply: ({ dice }) => ({
+      ok: true,
+      dice: dice.map(value => Math.min(6, value + 2)) as typeof dice,
+      message: '모든 주사위가 2씩 증가했습니다.',
+    }),
+  },
+  {
+    id: 'median_three',
+    name: 'Median Three',
+    description: '선택한 주사위 3개를 그 셋의 중앙값으로 통일합니다.',
+    rarity: 'rare',
+    tags: ['set'],
+    apply: ({ dice, selectedDice }) => {
+      if (selectedDice.length !== 3) {
+        return { ok: false, message: '주사위 3개를 정확히 선택해야 합니다.' };
+      }
+      const vals = [...selectedDice.map(i => dice[i])].sort((x, y) => x - y);
+      const median = vals[1];
+      const nextDice = [...dice];
+      selectedDice.forEach(i => {
+        nextDice[i] = median as (typeof nextDice)[number];
+      });
+      return {
+        ok: true,
+        dice: nextDice as typeof dice,
+        message: `세 주사위를 중앙값 ${median}(으)로 맞췄습니다.`,
+      };
+    },
+  },
+  {
+    id: 'grand_raise',
+    name: 'Grand Raise',
+    description: '모든 주사위를 +3 올립니다. 최대값은 6입니다.',
+    rarity: 'legendary',
+    tags: ['high'],
+    apply: ({ dice }) => ({
+      ok: true,
+      dice: dice.map(value => Math.min(6, value + 3)) as typeof dice,
+      message: '모든 주사위가 3씩 증가했습니다.',
+    }),
+  },
+  {
+    id: 'apex_unify',
+    name: 'Apex Unify',
+    description: '모든 주사위를 현재 나온 숫자 중 최고값으로 통일합니다.',
+    rarity: 'legendary',
+    tags: ['high', 'set'],
+    apply: ({ dice }) => {
+      const peak = Math.max(...dice);
+      return {
+        ok: true,
+        dice: dice.map(() => peak) as typeof dice,
+        message: `모든 주사위를 ${peak}(으)로 통일했습니다.`,
+      };
+    },
+  },
+  {
+    id: 'negative_ink',
+    name: 'Negative Ink',
+    description:
+      '보유한 조커 중 네거티브가 아닌 조커 1장을 무작위로 네거티브로 만듭니다. 네거티브 조커는 슬롯을 차지하지 않습니다.',
+    rarity: 'legendary',
+    tags: ['economy'],
+    apply: ({ dice, jokerIds, negativeJokerIds, rng }) => {
+      const candidates = jokerIds.filter(jokerId => !negativeJokerIds.includes(jokerId));
+      if (candidates.length === 0) {
+        return { ok: false, message: '네거티브로 만들 조커가 없습니다.' };
+      }
+
+      const picked = candidates[Math.floor(rng() * candidates.length)];
+
+      return {
+        ok: true,
+        dice,
+        negativeJokerId: picked,
+        message: '랜덤 조커 1장을 네거티브로 만들었습니다.',
       };
     },
   },

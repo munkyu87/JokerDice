@@ -13,10 +13,11 @@ import {
   View,
 } from 'react-native';
 
-import { JOKERS } from '../game/data';
+import { ACTION_CARDS, JOKERS } from '../game/data';
+import { getActionCardPreviewImage } from '../game/actionCardPreviewImages';
 import { getDiceModeImage, type DieMode } from '../game/dicePreviewImages';
 import { getJokerPreviewImage } from '../game/jokerPreviewImages';
-import { JokerDefinition, JokerRarity } from '../game/types';
+import { ActionCardRarity, JokerDefinition, JokerRarity } from '../game/types';
 
 const LOBBY_LOGO = require('../assets/etc/logo.png');
 const JOKER_LIST_BTN = require('../assets/etc/joker-card-list.png');
@@ -49,6 +50,15 @@ const JOKER_TRIGGER_LABELS: Record<JokerDefinition['trigger'], string> = {
   onHandStart: '핸드 시작',
   beforeScore: '득점 전',
   afterScore: '득점 후',
+};
+
+const ACTION_TAG_LABEL: Record<string, string> = {
+  high: 'HIGH',
+  even: 'EVEN',
+  set: 'SET',
+  sequence: 'RUN',
+  economy: 'GOLD',
+  consistency: 'SAFE',
 };
 const ROULETTE_CARD_WIDTH = 92;
 const ROULETTE_CARD_GAP = 10;
@@ -165,6 +175,7 @@ export function LobbyScreen({
   }, [selectedMode]);
 
   const [showJokerGuide, setShowJokerGuide] = useState(false);
+  const [showHandCardGuide, setShowHandCardGuide] = useState(false);
   const [selectedJokerId, setSelectedJokerId] = useState<string>(JOKERS[0]?.id ?? 'lucky_reroll');
   const [showStartReveal, setShowStartReveal] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -195,6 +206,14 @@ export function LobbyScreen({
     return JOKER_RARITY_ORDER.map(rarity => ({
       rarity,
       items: JOKERS.filter(j => j.rarity === rarity),
+    }));
+  }, []);
+  const handCardSections = useMemo(() => {
+    return JOKER_RARITY_ORDER.map(rarity => ({
+      rarity: rarity as ActionCardRarity,
+      items: ACTION_CARDS.filter(card => card.rarity === rarity).sort((a, b) =>
+        a.name.localeCompare(b.name),
+      ),
     }));
   }, []);
 
@@ -440,6 +459,13 @@ export function LobbyScreen({
             <View style={styles.frameFooter}>
               <View style={styles.frameFooterTopRow}>
                 <Pressable
+                  onPress={() => setShowHandCardGuide(true)}
+                  style={styles.footerGuideButton}
+                  hitSlop={10}
+                  accessibilityLabel="핸드 카드 목록">
+                  <Text style={styles.footerGuideButtonText}>핸드 카드</Text>
+                </Pressable>
+                <Pressable
                   onPress={() => setShowJokerGuide(true)}
                   style={({ pressed }) => [
                     styles.jokerListButton
@@ -550,6 +576,96 @@ export function LobbyScreen({
             </View>
 
             {/* 등급/이름 UI는 빼고, 중앙 캐러셀만 보여줍니다. */}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={showHandCardGuide}
+        onRequestClose={() => setShowHandCardGuide(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>핸드 카드 목록</Text>
+              <Pressable onPress={() => setShowHandCardGuide(false)} style={styles.modalCloseButton}>
+                <Text style={styles.modalCloseText}>닫기</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.handCardGuideIntro}>
+              게임에 등장하는 액션 카드 종류입니다. 획득·상점에서 덱에 추가될 수 있습니다.
+            </Text>
+            <ScrollView style={styles.handCardGuideScroll} contentContainerStyle={styles.handCardGuideScrollContent}>
+              {handCardSections
+                .filter(section => section.items.length > 0)
+                .map(section => (
+                  <View key={section.rarity} style={styles.handCardGuideSection}>
+                    <View style={styles.jokerSectionHeader}>
+                      <View
+                        style={[
+                          styles.jokerSectionTag,
+                          {
+                            borderColor: JOKER_RARITY_COLORS[section.rarity].border,
+                            backgroundColor: JOKER_RARITY_COLORS[section.rarity].glow,
+                          },
+                        ]}>
+                        <Text style={[styles.jokerSectionTagText, { color: JOKER_RARITY_COLORS[section.rarity].border }]}>
+                          {section.rarity === 'legendary' ? '★ ' : ''}
+                          {JOKER_RARITY_LABELS[section.rarity]}
+                        </Text>
+                        <Text style={styles.jokerSectionTagCount}> {section.items.length}</Text>
+                      </View>
+                    </View>
+                    {section.items.map(card => {
+                      const preview = getActionCardPreviewImage(card.id);
+                      const primaryTag = card.tags[0] ?? 'consistency';
+                      const tag = ACTION_TAG_LABEL[primaryTag] ?? primaryTag.toUpperCase();
+                      const rarityColors = JOKER_RARITY_COLORS[card.rarity];
+
+                      return (
+                        <View key={card.id} style={[styles.handCardGuideRow, { borderColor: rarityColors.border }]}>
+                          <View style={[styles.handCardGuideThumbWrap, { borderColor: rarityColors.border }]}>
+                            {preview ? (
+                              <Image source={preview} style={styles.handCardGuideThumb} resizeMode="cover" />
+                            ) : (
+                              <View
+                                style={[
+                                  styles.handCardGuideThumbPlaceholder,
+                                  { backgroundColor: rarityColors.glow },
+                                ]}>
+                                <Text style={[styles.handCardGuideThumbGlyph, { color: rarityColors.border }]}>
+                                  {card.name.slice(0, 1)}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                          <View style={styles.handCardGuideBody}>
+                            <View style={styles.handCardGuideTitleRow}>
+                              <Text style={styles.handCardGuideName}>{card.name}</Text>
+                              <View style={styles.handCardGuideBadgeRow}>
+                                <Text
+                                  style={[
+                                    styles.handCardGuideRarity,
+                                    {
+                                      color: rarityColors.border,
+                                      backgroundColor: rarityColors.glow,
+                                    },
+                                  ]}>
+                                  {card.rarity === 'legendary' ? '★ ' : ''}
+                                  {JOKER_RARITY_LABELS[card.rarity]}
+                                </Text>
+                                <Text style={styles.handCardGuideTag}>{tag}</Text>
+                              </View>
+                            </View>
+                            <Text style={styles.handCardGuideDesc}>{card.description}</Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                ))}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -725,6 +841,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
     alignItems: 'center',
+    gap: 8,
+  },
+  footerGuideButton: {
+    marginRight: 2,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#9ab7d0',
+    backgroundColor: '#f0f7ff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  footerGuideButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#2e5472',
   },
   jokerListButton: {
     // width: 40,
@@ -1226,6 +1357,103 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#2e5472',
+  },
+  handCardGuideIntro: {
+    fontSize: 12,
+    color: '#5f7f9a',
+    lineHeight: 18,
+  },
+  handCardGuideScroll: {
+    minHeight: 120,
+    maxHeight: 360,
+  },
+  handCardGuideScrollContent: {
+    paddingBottom: 12,
+    gap: 10,
+  },
+  handCardGuideSection: {
+    gap: 8,
+  },
+  handCardGuideRow: {
+    flexDirection: 'row',
+    gap: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#c4dff3',
+    backgroundColor: '#ffffff',
+    padding: 10,
+  },
+  handCardGuideThumbWrap: {
+    width: 56,
+    height: 72,
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+  },
+  handCardGuideThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  handCardGuideThumbPlaceholder: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#dbe8f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  handCardGuideThumbGlyph: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#355572',
+  },
+  handCardGuideBody: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  handCardGuideTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  handCardGuideName: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#173450',
+  },
+  handCardGuideBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  handCardGuideRarity: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#7c3aed',
+    backgroundColor: '#f3e8ff',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  handCardGuideTag: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#185cc4',
+    backgroundColor: '#e7f1ff',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  handCardGuideDesc: {
+    fontSize: 12,
+    color: '#43627e',
+    lineHeight: 17,
   },
   modalBody: {
     flexDirection: 'column',
