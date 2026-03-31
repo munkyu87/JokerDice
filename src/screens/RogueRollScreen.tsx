@@ -107,6 +107,12 @@ const JOKER_THEME = {
   consistency: { frame: '#38bdf8', surface: '#102535', accent: '#7dd3fc', badge: '#1a3850' },
 } as const;
 const DICE_ROLL_DURATION_MS = 400;
+const ACTION_CARD_LIST_ASPECT_RATIO = 56 / 72;
+const HAND_CARD_ASPECT_RATIO = 62 / 102;
+const HAND_CARD_WIDTH = 62;
+const HAND_CARD_WIDTH_COMPACT = 56;
+const HAND_CARD_GAP = 8;
+const HAND_CARD_GAP_COMPACT = 6;
 
 const getPrimaryTag = (tags: Array<keyof typeof TAG_LABELS> | undefined) =>
   tags?.[0] ?? 'consistency';
@@ -253,6 +259,7 @@ export function RogueRollScreen({
   const [showGuide, setShowGuide] = useState(false);
   const [showRunInfo, setShowRunInfo] = useState(false);
   const [showDeckList, setShowDeckList] = useState(false);
+  const [cardRowWidth, setCardRowWidth] = useState(0);
   const [selectedCardIndex, setSelectedCardIndex] = useState<number | null>(null);
   const [selectedJokerIndex, setSelectedJokerIndex] = useState<number | null>(null);
   const [selectedRewardId, setSelectedRewardId] = useState<string | null>(null);
@@ -383,20 +390,19 @@ export function RogueRollScreen({
       return undefined;
     }
 
-    const tooltipWidthPercent = Math.min(40, Math.max(28, (100 / visibleCardSlotCount) * 1.4));
-    const slotWidthPercent = 100 / visibleCardSlotCount;
-    const slotCenterPercent = slotWidthPercent * (selectedCardIndex + 0.5);
-    const maxLeftPercent = 100 - tooltipWidthPercent;
-    const leftPercent = Math.min(
-      maxLeftPercent,
-      Math.max(0, slotCenterPercent - tooltipWidthPercent / 2),
-    );
+    const cardWidth = isCompact ? HAND_CARD_WIDTH_COMPACT : HAND_CARD_WIDTH;
+    const gap = isCompact ? HAND_CARD_GAP_COMPACT : HAND_CARD_GAP;
+    const tooltipWidth = Math.min(180, Math.max(136, cardWidth * 2.35));
+    const estimatedRowWidth = cardRowWidth > 0 ? cardRowWidth : cardWidth * visibleCardSlotCount + gap * (visibleCardSlotCount - 1);
+    const slotCenter = selectedCardIndex * (cardWidth + gap) + cardWidth / 2;
+    const maxLeft = Math.max(0, estimatedRowWidth - tooltipWidth);
+    const left = Math.min(maxLeft, Math.max(0, slotCenter - tooltipWidth / 2));
 
     return {
-      width: `${tooltipWidthPercent}%` as const,
-      left: `${leftPercent}%` as const,
+      width: tooltipWidth,
+      left,
     };
-  }, [selectedCardIndex, visibleCardSlotCount]);
+  }, [cardRowWidth, isCompact, selectedCardIndex, visibleCardSlotCount]);
   const selectedJokerTooltipStyle = useMemo(() => {
     if (selectedJokerIndex === null) {
       return undefined;
@@ -1345,7 +1351,9 @@ export function RogueRollScreen({
               </Animated.View>
             ) : null}
 
-            <View style={[styles.cardRow, visibleCardSlotCount > 3 ? styles.cardRowDense : undefined]}>
+            <View
+              onLayout={event => setCardRowWidth(event.nativeEvent.layout.width)}
+              style={[styles.cardRow, visibleCardSlotCount > 3 ? styles.cardRowDense : undefined]}>
             {Array.from({ length: visibleCardSlotCount }, (_, index) => {
               const cardId = state.deck.hand[index];
               const card = cardId ? getActionCard(cardId) : undefined;
@@ -1407,6 +1415,7 @@ export function RogueRollScreen({
                   style={[
                     animatedStyle,
                     styles.cardSlot,
+                    isCompact ? styles.cardSlotCompact : undefined,
                     isDragging ? styles.draggingCardSlot : undefined,
                   ]}
                   {...(card ? panResponder.panHandlers : {})}>
@@ -1980,7 +1989,7 @@ const styles = StyleSheet.create({
   },
   dropZoneMiniCard: {
     width: 44,
-    height: 56,
+    aspectRatio: HAND_CARD_ASPECT_RATIO,
     borderRadius: 10,
     borderWidth: 2,
     overflow: 'hidden',
@@ -2699,12 +2708,14 @@ const styles = StyleSheet.create({
     color: '#2f5573',
   },
   cardRow: {
-    flex: 1,
     flexDirection: 'row',
-    gap: 8,
+    gap: HAND_CARD_GAP,
+    width: '100%',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
   },
   cardRowDense: {
-    gap: 6,
+    gap: HAND_CARD_GAP_COMPACT,
   },
   cardRowWrap: {
     position: 'relative',
@@ -2812,7 +2823,13 @@ const styles = StyleSheet.create({
     transform: [{ rotate: '-45deg' }],
   },
   cardSlot: {
-    flex: 1,
+    width: HAND_CARD_WIDTH,
+    flexGrow: 0,
+    flexShrink: 0,
+    justifyContent: 'flex-end',
+  },
+  cardSlotCompact: {
+    width: HAND_CARD_WIDTH_COMPACT,
   },
   draggingCardSlot: {
     zIndex: 6,
@@ -2821,7 +2838,9 @@ const styles = StyleSheet.create({
     zIndex: 8,
   },
   handCard: {
-    flex: 1,
+    width: '100%',
+    aspectRatio: HAND_CARD_ASPECT_RATIO,
+    alignSelf: 'center',
     backgroundColor: '#e9eff8',
     borderRadius: 14,
     paddingHorizontal: 4,
@@ -3196,12 +3215,12 @@ const styles = StyleSheet.create({
   },
   rewardCardImage: {
     width: '100%',
-    height: 110,
+    aspectRatio: ACTION_CARD_LIST_ASPECT_RATIO,
     borderRadius: 10,
   },
   rewardCardPlaceholder: {
     width: '100%',
-    height: 110,
+    aspectRatio: ACTION_CARD_LIST_ASPECT_RATIO,
     borderRadius: 10,
     backgroundColor: '#d8e4f1',
     alignItems: 'center',
@@ -3209,7 +3228,7 @@ const styles = StyleSheet.create({
   },
   rewardCardFace: {
     width: '100%',
-    height: 110,
+    aspectRatio: ACTION_CARD_LIST_ASPECT_RATIO,
     borderRadius: 10,
     backgroundColor: '#fcfdff',
     alignItems: 'center',
