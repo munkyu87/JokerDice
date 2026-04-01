@@ -94,14 +94,16 @@ const HAND_BASE_SCORES: Record<HandRank, number> = {
   full_house: 60,
   four: 80,
   five: 100,
+  six: 120,
 };
 
 const MAX_HAND_CARDS = 3;
+const BASE_DICE_COUNT = 5;
 
 export const rollDie = (rng: () => number = Math.random): DiceValue =>
   (Math.floor(rng() * 6) + 1) as DiceValue;
 
-export const rollDice = (count = 5, rng: () => number = Math.random): DiceRoll =>
+export const rollDice = (count = BASE_DICE_COUNT, rng: () => number = Math.random): DiceRoll =>
   Array.from({ length: count }, () => rollDie(rng)) as DiceRoll;
 
 export const rerollDiceAt = (
@@ -224,6 +226,7 @@ export const getPurgeableCards = (deck: DeckState): PurgeOption[] => [
 export const evaluateHand = (dice: number[]): HandEvaluation => {
   const counts = new Map<number, number>();
   const sortedDice = [...dice].sort((left, right) => left - right);
+  const total = sortedDice.reduce((sum, value) => sum + value, 0);
 
   sortedDice.forEach(value => {
     counts.set(value, (counts.get(value) ?? 0) + 1);
@@ -234,35 +237,40 @@ export const evaluateHand = (dice: number[]): HandEvaluation => {
     counts.size === 5 &&
     sortedDice.every((value, index) => index === 0 || value - sortedDice[index - 1] === 1);
 
+  // 숨겨진 족보: 추가 주사위까지 포함해 전부 6이면 Six
+  if (sortedDice.length === 6 && sortedDice.every(value => value === 6)) {
+    return { rank: 'six', counts: groupedCounts, total };
+  }
+
   if (groupedCounts[0] === 5) {
-    return { rank: 'five', counts: groupedCounts, total: sortedDice.reduce((sum, value) => sum + value, 0) };
+    return { rank: 'five', counts: groupedCounts, total };
   }
 
   if (groupedCounts[0] === 4) {
-    return { rank: 'four', counts: groupedCounts, total: sortedDice.reduce((sum, value) => sum + value, 0) };
+    return { rank: 'four', counts: groupedCounts, total };
   }
 
   if (groupedCounts[0] === 3 && groupedCounts[1] === 2) {
-    return { rank: 'full_house', counts: groupedCounts, total: sortedDice.reduce((sum, value) => sum + value, 0) };
+    return { rank: 'full_house', counts: groupedCounts, total };
   }
 
   if (isStraight) {
-    return { rank: 'straight', counts: groupedCounts, total: sortedDice.reduce((sum, value) => sum + value, 0) };
+    return { rank: 'straight', counts: groupedCounts, total };
   }
 
   if (groupedCounts[0] === 3) {
-    return { rank: 'three', counts: groupedCounts, total: sortedDice.reduce((sum, value) => sum + value, 0) };
+    return { rank: 'three', counts: groupedCounts, total };
   }
 
   if (groupedCounts[0] === 2 && groupedCounts[1] === 2) {
-    return { rank: 'two_pair', counts: groupedCounts, total: sortedDice.reduce((sum, value) => sum + value, 0) };
+    return { rank: 'two_pair', counts: groupedCounts, total };
   }
 
   if (groupedCounts[0] === 2) {
-    return { rank: 'pair', counts: groupedCounts, total: sortedDice.reduce((sum, value) => sum + value, 0) };
+    return { rank: 'pair', counts: groupedCounts, total };
   }
 
-  return { rank: 'high_card', counts: groupedCounts, total: sortedDice.reduce((sum, value) => sum + value, 0) };
+  return { rank: 'high_card', counts: groupedCounts, total };
 };
 
 export const getActionCard = (cardId: string): ActionCardDefinition | undefined =>
@@ -297,6 +305,7 @@ export const getHandStartBonus = (jokerIds: string[], bossId?: string) => {
     finalScore: 0,
     extraRerolls: 0,
     handSizeBonus: 0,
+    diceCountBonus: 0,
     handRefreshes: 0,
     goldDelta: 0,
     notes: [],
@@ -368,6 +377,7 @@ export const scoreDice = ({
     finalScore: 0,
     extraRerolls: 0,
     handSizeBonus: 0,
+    diceCountBonus: 0,
     handRefreshes: 0,
     goldDelta: 0,
     notes: scoreContext.notes,

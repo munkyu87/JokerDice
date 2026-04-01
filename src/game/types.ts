@@ -10,7 +10,8 @@ export type HandRank =
   | 'straight'
   | 'full_house'
   | 'four'
-  | 'five';
+  | 'five'
+  | 'six';
 
 export type BuildTag =
   | 'high'
@@ -68,6 +69,7 @@ export type JokerEffectContext = {
   finalScore: number;
   extraRerolls: number;
   handSizeBonus: number;
+  diceCountBonus: number;
   handRefreshes: number;
   goldDelta: number;
   notes: string[];

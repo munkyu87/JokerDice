@@ -616,6 +616,19 @@ export const JOKERS: JokerDefinition[] = [
     trigger: 'onHandStart',
     apply: ctx => ctx,
   },
+  {
+    id: 'sixth_sense',
+    name: 'Sixth Sense',
+    description: '매 Hand 시작 시 주사위를 1개 더 굴립니다.',
+    rarity: 'legendary',
+    tags: ['consistency', 'high'],
+    trigger: 'onHandStart',
+    apply: ctx => ({
+      ...ctx,
+      diceCountBonus: ctx.diceCountBonus + 1,
+      notes: [...ctx.notes, 'Sixth Sense: 시작 주사위 +1'],
+    }),
+  },
 ];
 
 export const BOSSES: BossDefinition[] = [

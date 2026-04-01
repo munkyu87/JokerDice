@@ -36,6 +36,7 @@ import {
 const MAX_JOKERS = 5;
 const MAX_CARDS_PER_HAND = 2;
 const BASE_HAND_DRAW = 3;
+const BASE_DICE_COUNT = 5;
 
 const getOwnedNegativeJokerIds = (jokerIds: string[], negativeJokerIds: string[]) =>
   negativeJokerIds.filter(jokerId => jokerIds.includes(jokerId));
@@ -54,6 +55,7 @@ type StageState = {
 
 type HandState = {
   dice: DiceRoll;
+  diceAnimation: 'all' | number[];
   selectedDice: number[];
   cardsPlayed: number;
   freeRerolls: number;
@@ -73,6 +75,7 @@ type GameState = {
   hand: HandState;
   rewardOptions: RewardOption[];
   shopItems: ShopItem[];
+  shopReplaceItemId?: string;
   purgeSource?: PurgeSource;
   message: string;
   lastScore?: LastScoringSummary;
@@ -124,11 +127,13 @@ const beginHand = ({
   const handStartBonus = getHandStartBonus(jokers, bossId);
   const drawCount = BASE_HAND_DRAW + handStartBonus.handSizeBonus;
   const preparedDeck = drawCards(resetDeck, drawCount, rng);
+  const diceCount = BASE_DICE_COUNT + handStartBonus.diceCountBonus;
 
   return {
     deck: preparedDeck,
     hand: {
-      dice: rollDice(5, rng),
+      dice: rollDice(diceCount, rng),
+      diceAnimation: 'all' as const,
       selectedDice: [],
       cardsPlayed: 0,
       freeRerolls: handStartBonus.extraRerolls,
@@ -251,6 +256,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
         hand: {
           ...currentState.hand,
           dice: nextDice,
+          diceAnimation: selectedDice.length === currentState.hand.dice.length ? 'all' : selectedDice,
           selectedDice: [],
           freeRerolls: Math.max(0, currentState.hand.freeRerolls - 1),
         },
@@ -335,6 +341,13 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
         };
       }
 
+      const changedIndices = result.dice.reduce<number[]>((indices, value, index) => {
+        if (currentState.hand.dice[index] !== value) {
+          indices.push(index);
+        }
+        return indices;
+      }, []);
+
       const nextNegativeJokerIds = result.negativeJokerId
         ? Array.from(
             new Set(
@@ -354,6 +367,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
         hand: {
           ...currentState.hand,
           dice: result.dice,
+          diceAnimation: changedIndices,
           selectedDice: [],
           cardsPlayed: currentState.hand.cardsPlayed + 1,
         },
@@ -381,6 +395,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
       ...currentState,
       phase: 'playing',
       deck: opening.deck,
+      shopReplaceItemId: undefined,
       stage: {
         ante: nextAnte,
         stageIndex: nextStageIndex,
@@ -505,6 +520,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
       // 같은 스테이지 내 다음 Hand: 손패(덱의 hand)는 유지하고 주사위만 새로 굴림. 덱 셔플·추가 드로우는 스테이지 클리어 후 다음 스테이지에서만.
       const handStartBonus = getHandStartBonus(currentState.jokers, currentState.stage.bossId);
       const drawCount = BASE_HAND_DRAW + handStartBonus.handSizeBonus;
+      const diceCount = BASE_DICE_COUNT + handStartBonus.diceCountBonus;
 
       const { activeJokerIds } = getActiveJokerIds(currentState.jokers, currentState.stage.bossId);
       let deckAfterGapFill = currentState.deck;
@@ -533,7 +549,8 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
           remainingHands,
         },
         hand: {
-          dice: rollDice(5, rng),
+          dice: rollDice(diceCount, rng),
+          diceAnimation: 'all' as const,
           selectedDice: [],
           cardsPlayed: 0,
           freeRerolls: handStartBonus.extraRerolls,
@@ -604,6 +621,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
         ...nextState,
         phase: 'shop',
         shopItems: createShopItems({ ownedJokers: nextState.jokers }),
+        shopReplaceItemId: undefined,
       };
     });
   };
@@ -626,6 +644,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
           ...currentState,
           gold: currentState.gold - item.price,
           shopItems: createShopItems({ ownedJokers: currentState.jokers }),
+          shopReplaceItemId: undefined,
           message: '상점을 새로 고쳤습니다.',
         };
       }
@@ -635,6 +654,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
           ...currentState,
           gold: currentState.gold - item.price,
           phase: 'purge',
+          shopReplaceItemId: undefined,
           purgeSource: 'shop',
           message: '덱에서 제거할 카드를 선택하세요.',
         };
@@ -644,7 +664,8 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
         if (getOccupiedJokerSlots(currentState.jokers, currentState.negativeJokerIds) >= MAX_JOKERS) {
           return {
             ...currentState,
-            message: '조커 슬롯이 가득 찼습니다.',
+            shopReplaceItemId: item.id,
+            message: `${item.title} 구매를 위해 교체할 조커를 선택하세요.`,
           };
         }
 
@@ -653,6 +674,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
           gold: currentState.gold - item.price,
           jokers: [...currentState.jokers, item.jokerId],
           shopItems: currentState.shopItems.filter(shopItem => shopItem.id !== item.id),
+          shopReplaceItemId: undefined,
           message: `${item.title} 조커를 구매했습니다.`,
         };
       }
@@ -665,7 +687,59 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
           discardPile: [...currentState.deck.discardPile, item.cardId],
         },
         shopItems: currentState.shopItems.filter(shopItem => shopItem.id !== item.id),
+        shopReplaceItemId: undefined,
         message: `${item.title} 카드를 구매했습니다.`,
+      };
+    });
+  };
+
+  const replaceShopJoker = (slotIndex: number) => {
+    if (state.phase !== 'shop') {
+      return;
+    }
+
+    setState(currentState => {
+      if (currentState.phase !== 'shop' || !currentState.shopReplaceItemId) {
+        return currentState;
+      }
+
+      const item = currentState.shopItems.find(shopItem => shopItem.id === currentState.shopReplaceItemId);
+      if (!item || item.type !== 'joker') {
+        return {
+          ...currentState,
+          shopReplaceItemId: undefined,
+          message: '교체할 상점 조커를 찾지 못했습니다.',
+        };
+      }
+
+      if (currentState.gold < item.price) {
+        return {
+          ...currentState,
+          shopReplaceItemId: undefined,
+          message: '골드가 부족합니다.',
+        };
+      }
+
+      const replacedJokerId = currentState.jokers[slotIndex];
+      if (!replacedJokerId) {
+        return {
+          ...currentState,
+          message: '교체할 조커를 선택하세요.',
+        };
+      }
+
+      const nextJokers = [...currentState.jokers];
+      nextJokers[slotIndex] = item.jokerId;
+      const replacedJokerName = getJoker(replacedJokerId)?.name ?? '기존 조커';
+
+      return {
+        ...currentState,
+        gold: currentState.gold - item.price,
+        jokers: nextJokers,
+        negativeJokerIds: currentState.negativeJokerIds.filter(id => id !== replacedJokerId),
+        shopItems: currentState.shopItems.filter(shopItem => shopItem.id !== item.id),
+        shopReplaceItemId: undefined,
+        message: `${replacedJokerName} 대신 ${item.title} 조커를 구매했습니다.`,
       };
     });
   };
@@ -683,6 +757,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
           ...currentState,
           deck: nextDeck,
           phase: 'shop',
+        shopReplaceItemId: undefined,
           purgeSource: undefined,
           shopItems: createShopItems({ ownedJokers: currentState.jokers }),
           message: '카드 1장을 제거했습니다. 상점으로 이동합니다.',
@@ -693,6 +768,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
         ...currentState,
         deck: nextDeck,
         phase: 'shop',
+        shopReplaceItemId: undefined,
         purgeSource: undefined,
         message: '카드 1장을 제거했습니다.',
       };
@@ -889,6 +965,7 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
     submitHand,
     applyReward,
     buyShopItem,
+    replaceShopJoker,
     removeDeckCard,
     continueFromShop,
     continueFromSettlement,

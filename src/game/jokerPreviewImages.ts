@@ -14,6 +14,7 @@ const JOKER_PREVIEW_IMAGES: Record<string, ImageSourcePropType> = {
   fresh_deal: require('../assets/jokers/joker-fresh-deal-character.png'),
   shop_6_slot: require('../assets/jokers/joker-market-expansion-character.png'),
   gap_draw: require('../assets/jokers/joker-gap-fill-character.png'),
+  sixth_sense: require('../assets/jokers/joker-sixth-sense-character.png'),
 };
 
 export const getJokerPreviewImage = (jokerId: string): ImageSourcePropType | undefined =>
