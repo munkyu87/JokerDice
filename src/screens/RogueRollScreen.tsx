@@ -4,13 +4,17 @@ import {
   Easing,
   Image,
   ImageBackground,
+  LayoutAnimation,
   Modal,
   PanResponder,
+  Platform,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
+  UIManager,
   useColorScheme,
   useWindowDimensions,
   View,
@@ -45,15 +49,89 @@ const HAND_RANK_LABELS: Record<HandRank, string> = {
   six: 'Six',
 };
 
-const HAND_RANK_GUIDE: Array<{ rank: HandRank; base: number; hint: string }> = [
-  { rank: 'high_card', base: 0, hint: '기본 숫자 합만 반영됩니다.' },
-  { rank: 'pair', base: 10, hint: '안정적인 초반 점수용.' },
-  { rank: 'two_pair', base: 20, hint: '셋업형 조커와 궁합이 좋습니다.' },
-  { rank: 'three', base: 30, hint: '세트 빌드의 시작점.' },
-  { rank: 'straight', base: 40, hint: '연속 숫자 빌드의 핵심.' },
-  { rank: 'full_house', base: 60, hint: '안정성과 고점의 균형.' },
-  { rank: 'four', base: 80, hint: '강한 단일 족보.' },
-  { rank: 'five', base: 100, hint: '최상위 족보.' },
+const HAND_RANK_GUIDE: Array<{
+  rank: HandRank;
+  base: number;
+  hint: string;
+  exampleText: string;
+  exampleGroups: Array<{
+    dice: DiceValue[];
+    tone: 'neutral' | 'blue' | 'violet' | 'gold' | 'red';
+    label?: string;
+  }>;
+}> = [
+  {
+    rank: 'high_card',
+    base: 0,
+    hint: '기본 숫자 합만 반영됩니다.',
+    exampleText: '예: 모두 다르지만 연속은 아님',
+    exampleGroups: [{ dice: [1, 2, 4, 5, 6], tone: 'neutral' }],
+  },
+  {
+    rank: 'pair',
+    base: 10,
+    hint: '안정적인 초반 점수용.',
+    exampleText: '예: 같은 숫자 2개',
+    exampleGroups: [
+      { dice: [3, 3], tone: 'blue', label: 'PAIR' },
+      { dice: [1, 5, 6], tone: 'neutral' },
+    ],
+  },
+  {
+    rank: 'two_pair',
+    base: 20,
+    hint: '셋업형 조커와 궁합이 좋습니다.',
+    exampleText: '예: 같은 숫자 2개가 두 묶음',
+    exampleGroups: [
+      { dice: [2, 2], tone: 'blue', label: 'PAIR' },
+      { dice: [5, 5], tone: 'violet', label: 'PAIR' },
+      { dice: [1], tone: 'neutral' },
+    ],
+  },
+  {
+    rank: 'three',
+    base: 30,
+    hint: '세트 빌드의 시작점.',
+    exampleText: '예: 같은 숫자 3개',
+    exampleGroups: [
+      { dice: [4, 4, 4], tone: 'blue', label: 'SET' },
+      { dice: [1, 6], tone: 'neutral' },
+    ],
+  },
+  {
+    rank: 'straight',
+    base: 40,
+    hint: '연속 숫자 빌드의 핵심.',
+    exampleText: '예: 숫자 5개가 연속',
+    exampleGroups: [{ dice: [2, 3, 4, 5, 6], tone: 'gold', label: 'RUN' }],
+  },
+  {
+    rank: 'full_house',
+    base: 60,
+    hint: '안정성과 고점의 균형.',
+    exampleText: '예: 3개 + 2개 조합',
+    exampleGroups: [
+      { dice: [2, 2, 2], tone: 'blue', label: 'SET' },
+      { dice: [5, 5], tone: 'violet', label: 'PAIR' },
+    ],
+  },
+  {
+    rank: 'four',
+    base: 80,
+    hint: '강한 단일 족보.',
+    exampleText: '예: 같은 숫자 4개',
+    exampleGroups: [
+      { dice: [6, 6, 6, 6], tone: 'red', label: 'FOUR' },
+      { dice: [2], tone: 'neutral' },
+    ],
+  },
+  {
+    rank: 'five',
+    base: 100,
+    hint: '최상위 족보.',
+    exampleText: '예: 같은 숫자 5개',
+    exampleGroups: [{ dice: [5, 5, 5, 5, 5], tone: 'red', label: 'FIVE' }],
+  },
 ];
 
 const JOKER_TRIGGER_LABELS = {
@@ -125,7 +203,7 @@ const HAND_CARD_WIDTH = 62;
 const HAND_CARD_WIDTH_COMPACT = 56;
 const HAND_CARD_GAP = 8;
 const HAND_CARD_GAP_COMPACT = 6;
-const DRAG_START_THRESHOLD_PX = 4;
+const DRAG_START_THRESHOLD_PX = 3;
 
 const getPrimaryTag = (tags: Array<keyof typeof TAG_LABELS> | undefined) =>
   tags?.[0] ?? 'consistency';
@@ -205,6 +283,74 @@ const DieFace = ({
     </View>
   </View>
 );
+
+const GuideDieChip = ({ value }: { value: DiceValue }) => (
+  <View style={styles.guideDieChip}>
+    <View style={styles.guideDieGrid}>
+      {DIE_PIP_MAP[value].map((visible, index) => (
+        <View key={`guide-${value}-${index}`} style={styles.guideDieCell}>
+          {visible ? <View style={styles.guideDiePip} /> : null}
+        </View>
+      ))}
+    </View>
+  </View>
+);
+
+const GUIDE_GROUP_TONES = {
+  neutral: {
+    backgroundColor: '#edf4fb',
+    borderColor: '#d2e0ee',
+    labelColor: '#59758f',
+  },
+  blue: {
+    backgroundColor: '#e4f1ff',
+    borderColor: '#9fc8f3',
+    labelColor: '#2267a8',
+  },
+  violet: {
+    backgroundColor: '#eee9ff',
+    borderColor: '#c7b5f5',
+    labelColor: '#6d55bd',
+  },
+  gold: {
+    backgroundColor: '#fff4da',
+    borderColor: '#efcf84',
+    labelColor: '#9a6a12',
+  },
+  red: {
+    backgroundColor: '#ffe5e5',
+    borderColor: '#f3a5a5',
+    labelColor: '#b33b3b',
+  },
+} as const;
+
+const GuideDiceGroup = ({
+  dice,
+  tone,
+  label,
+}: {
+  dice: DiceValue[];
+  tone: keyof typeof GUIDE_GROUP_TONES;
+  label?: string;
+}) => {
+  const palette = GUIDE_GROUP_TONES[tone];
+  return (
+    <View
+      style={[
+        styles.guideDiceGroup,
+        { backgroundColor: palette.backgroundColor, borderColor: palette.borderColor },
+      ]}>
+      {label ? (
+        <Text style={[styles.guideDiceGroupLabel, { color: palette.labelColor }]}>{label}</Text>
+      ) : null}
+      <View style={styles.guideDiceRow}>
+        {dice.map((value, index) => (
+          <GuideDieChip key={`${label ?? tone}-${value}-${index}`} value={value} />
+        ))}
+      </View>
+    </View>
+  );
+};
 
 const DropZoneHandPreview = ({ cardId }: { cardId: string }) => {
   const card = getActionCard(cardId);
@@ -642,6 +788,29 @@ export function RogueRollScreen({
     [],
   );
 
+  const animateListReorder = useCallback(() => {
+    LayoutAnimation.configureNext({
+      duration: 170,
+      update: {
+        type: LayoutAnimation.Types.easeInEaseOut,
+      },
+      create: {
+        type: LayoutAnimation.Types.easeInEaseOut,
+        property: LayoutAnimation.Properties.opacity,
+      },
+      delete: {
+        type: LayoutAnimation.Types.easeInEaseOut,
+        property: LayoutAnimation.Properties.opacity,
+      },
+    });
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
+
   useEffect(() => {
     phaseRef.current = state.phase;
     handCardsRef.current = state.deck.hand;
@@ -939,6 +1108,7 @@ export function RogueRollScreen({
                 visibleCardSlotCountRef.current,
               );
               if (target !== null && target !== index) {
+                animateListReorder();
                 reorderHandCardsRef.current(index, target);
                 setSelectedCardIndex(null);
               }
@@ -956,6 +1126,7 @@ export function RogueRollScreen({
         }),
       ),
     [
+      animateListReorder,
       findSlotIndexAtPoint,
       handleCardPreview,
       hasGestureExceededDragThreshold,
@@ -1028,6 +1199,7 @@ export function RogueRollScreen({
                 renderedJokerCountRef.current,
               );
               if (target !== null && target !== slotIndex) {
+                animateListReorder();
                 reorderJokersRef.current(slotIndex, target);
                 setSelectedJokerIndex(null);
               }
@@ -1044,6 +1216,7 @@ export function RogueRollScreen({
         }),
       ),
     [
+      animateListReorder,
       findSlotIndexAtPoint,
       handleJokerPreview,
       hasGestureExceededDragThreshold,
@@ -1227,28 +1400,19 @@ export function RogueRollScreen({
               const jokerDragAnimation = jokerDragAnimationsRef.current[slotIndex];
               const isJokerDragging = draggingJokerIndex === slotIndex;
               const slotJokerInSell = isJokerDragging && isDraggingOverSellZone;
+              const jokerLiftAnimation = animation.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, -6],
+              });
+              const jokerScaleAnimation = animation.interpolate({
+                inputRange: [0, 1],
+                outputRange: [1, 1.03],
+              });
               const animatedStyle = {
                 transform: [
-                  ...(isJokerDragging && joker && jokerDragAnimation
-                    ? [
-                        { translateX: jokerDragAnimation.x },
-                        { translateY: jokerDragAnimation.y },
-                        { scale: slotJokerInSell ? 0.96 : 1.06 },
-                      ]
-                    : [
-                        {
-                          translateY: animation.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [0, -6],
-                          }),
-                        },
-                        {
-                          scale: animation.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [1, 1.03],
-                          }),
-                        },
-                      ]),
+                  { translateX: jokerDragAnimation.x },
+                  { translateY: Animated.add(jokerDragAnimation.y, jokerLiftAnimation) },
+                  { scale: isJokerDragging ? (slotJokerInSell ? 0.96 : 1.06) : jokerScaleAnimation },
                 ],
               };
 
@@ -1266,8 +1430,7 @@ export function RogueRollScreen({
                   }}
                   style={[animatedStyle, isJokerDragging ? styles.draggingJokerSlot : undefined]}
                   {...jokerPanResponders[slotIndex].panHandlers}>
-                  <Pressable
-                    onPress={() => handleJokerPreview(slotIndex)}
+                  <View
                     style={[
                       styles.jokerCard,
                       joker
@@ -1338,7 +1501,7 @@ export function RogueRollScreen({
                     ) : (
                       <View style={styles.emptyJokerSlot} />
                     )}
-                  </Pressable>
+                  </View>
                 </Animated.View>
               );
             })}
@@ -1510,34 +1673,25 @@ export function RogueRollScreen({
               const slotHandInSell = isDragging && isDraggingOverSellZone;
               const slotHandInUse = isDragging && isDraggingOverUseZone && !isDraggingOverSellZone;
               const slotHandHidden = slotHandInSell || slotHandInUse;
+              const cardLiftAnimation = animation.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, -7],
+              });
+              const cardScaleAnimation = animation.interpolate({
+                inputRange: [0, 1],
+                outputRange: [1, 1.04],
+              });
               const animatedStyle = {
                 transform: [
-                  ...(isDragging
-                    ? [
-                        {
-                          translateX: dragAnimation.x,
-                        },
-                        {
-                          translateY: dragAnimation.y,
-                        },
-                        {
-                          scale: slotHandHidden ? 0.96 : 1.03,
-                        },
-                      ]
-                    : [
-                        {
-                          translateY: animation.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [0, -7],
-                          }),
-                        },
-                        {
-                          scale: animation.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [1, 1.04],
-                          }),
-                        },
-                      ]),
+                  {
+                    translateX: dragAnimation.x,
+                  },
+                  {
+                    translateY: Animated.add(dragAnimation.y, cardLiftAnimation),
+                  },
+                  {
+                    scale: isDragging ? (slotHandHidden ? 0.96 : 1.03) : cardScaleAnimation,
+                  },
                 ],
               };
 
@@ -1560,9 +1714,7 @@ export function RogueRollScreen({
                     isDragging ? styles.draggingCardSlot : undefined,
                   ]}
                   {...(card ? panResponder.panHandlers : {})}>
-                  <Pressable
-                    disabled={!card}
-                    onPress={() => handleCardPreview(index)}
+                  <View
                     style={[
                       styles.handCard,
                       card
@@ -1632,7 +1784,7 @@ export function RogueRollScreen({
                         </View>
                       </>
                     )}
-                  </Pressable>
+                  </View>
                 </Animated.View>
               );
             })}
@@ -1676,16 +1828,33 @@ export function RogueRollScreen({
         </View>
 
         <OverlayModal visible={showGuide} title="족보 정보" onClose={() => setShowGuide(false)}>
-          <Text style={styles.modalIntro}>핵심 공식: (족보 기본값 + 주사위 합 + 보너스) x 배수</Text>
-          <View style={styles.guideList}>
-            {HAND_RANK_GUIDE.map(item => (
-              <View key={item.rank} style={styles.guideRow}>
-                <Text style={styles.guideRank}>{HAND_RANK_LABELS[item.rank]}</Text>
-                <Text style={styles.guideBase}>{item.base}</Text>
-                <Text style={styles.guideHint}>{item.hint}</Text>
-              </View>
-            ))}
-          </View>
+          <ScrollView
+            style={styles.guideScroll}
+            contentContainerStyle={styles.guideScrollContent}
+            showsVerticalScrollIndicator={false}>
+            <Text style={styles.modalIntro}>핵심 공식: (족보 기본값 + 주사위 합 + 보너스) x 배수</Text>
+            <View style={styles.guideList}>
+              {HAND_RANK_GUIDE.map(item => (
+                <View key={item.rank} style={styles.guideRow}>
+                  <View style={styles.guideHeaderRow}>
+                    <Text style={styles.guideRank}>{HAND_RANK_LABELS[item.rank]}</Text>
+                    <Text style={styles.guideBase}>{item.base}</Text>
+                  </View>
+                  <View style={styles.guideDiceGroupsRow}>
+                    {item.exampleGroups.map((group, index) => (
+                      <GuideDiceGroup
+                        key={`${item.rank}-group-${index}`}
+                        dice={group.dice}
+                        tone={group.tone}
+                        label={group.label}
+                      />
+                    ))}
+                  </View>
+                  <Text style={styles.guideExampleText}>{item.exampleText}</Text>
+                </View>
+              ))}
+            </View>
+          </ScrollView>
         </OverlayModal>
 
         <OverlayModal visible={showRunInfo} title="런 정보" onClose={() => setShowRunInfo(false)}>
@@ -2156,7 +2325,9 @@ export function RogueRollScreen({
                             isNegative ? styles.shopReplaceCardNegative : undefined,
                           ]}>
                           {ownedPreview ? (
-                            <Image source={ownedPreview} style={styles.shopReplaceCardImage} resizeMode="cover" />
+                            <View style={styles.shopReplaceCardArtFrame}>
+                              <Image source={ownedPreview} style={styles.shopReplaceCardImage} resizeMode="cover" />
+                            </View>
                           ) : (
                             <View style={styles.shopReplaceCardFallback}>
                               <Text style={styles.shopReplaceCardFallbackText}>
@@ -3368,7 +3539,19 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: '#ebf1f8',
     padding: 10,
-    gap: 2,
+    gap: 6,
+  },
+  guideScroll: {
+    flexGrow: 0,
+  },
+  guideScrollContent: {
+    gap: 8,
+    paddingBottom: 6,
+  },
+  guideHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   guideRank: {
     fontSize: 14,
@@ -3380,10 +3563,62 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0d63c9',
   },
-  guideHint: {
-    fontSize: 12,
-    lineHeight: 16,
-    color: '#516173',
+  guideDiceGroupsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  guideDiceGroup: {
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 5,
+    gap: 4,
+  },
+  guideDiceGroupLabel: {
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  guideDiceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  guideDieChip: {
+    width: 24,
+    height: 24,
+    borderRadius: 7,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#c9dcec',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guideDieGrid: {
+    width: 16,
+    height: 16,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  guideDieCell: {
+    width: '33.33%',
+    height: '33.33%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guideDiePip: {
+    width: 3.5,
+    height: 3.5,
+    borderRadius: 999,
+    backgroundColor: '#18324c',
+  },
+  guideExampleText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2f6eb0',
+    lineHeight: 15,
   },
   infoCard: {
     borderRadius: 14,
@@ -3663,15 +3898,21 @@ const styles = StyleSheet.create({
   shopReplaceCardNegative: {
     backgroundColor: '#f4f0ff',
   },
-  shopReplaceCardImage: {
+  shopReplaceCardArtFrame: {
     width: '100%',
     aspectRatio: HAND_CARD_ASPECT_RATIO,
     borderRadius: 8,
+    overflow: 'hidden',
+  },
+  shopReplaceCardImage: {
+    width: '100%',
+    height: '100%',
   },
   shopReplaceCardFallback: {
     width: '100%',
     aspectRatio: HAND_CARD_ASPECT_RATIO,
     borderRadius: 8,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#dde7f2',

@@ -198,6 +198,7 @@ export type DeckState = {
 export type HandEvaluation = {
   rank: HandRank;
   counts: number[];
+  scoringDice: number[];
   total: number;
 };
 

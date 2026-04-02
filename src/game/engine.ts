@@ -226,6 +226,7 @@ export const getPurgeableCards = (deck: DeckState): PurgeOption[] => [
 export const evaluateHand = (dice: number[]): HandEvaluation => {
   const counts = new Map<number, number>();
   const sortedDice = [...dice].sort((left, right) => left - right);
+  const uniqueSortedDice = [...new Set(sortedDice)];
   const total = sortedDice.reduce((sum, value) => sum + value, 0);
 
   sortedDice.forEach(value => {
@@ -233,44 +234,59 @@ export const evaluateHand = (dice: number[]): HandEvaluation => {
   });
 
   const groupedCounts = [...counts.values()].sort((left, right) => right - left);
-  const isStraight =
-    counts.size === 5 &&
-    sortedDice.every((value, index) => index === 0 || value - sortedDice[index - 1] === 1);
+  let bestStraight: number[] | null = null;
+  for (let startIndex = 0; startIndex <= uniqueSortedDice.length - 5; startIndex += 1) {
+    const candidate = uniqueSortedDice.slice(startIndex, startIndex + 5);
+    const isConsecutive = candidate.every(
+      (value, index) => index === 0 || value - candidate[index - 1] === 1,
+    );
+    if (isConsecutive) {
+      bestStraight = candidate;
+    }
+  }
 
   // 숨겨진 족보: 추가 주사위까지 포함해 전부 6이면 Six
   if (sortedDice.length === 6 && sortedDice.every(value => value === 6)) {
-    return { rank: 'six', counts: groupedCounts, total };
+    return { rank: 'six', counts: groupedCounts, scoringDice: sortedDice, total };
   }
 
   if (groupedCounts[0] === 5) {
-    return { rank: 'five', counts: groupedCounts, total };
+    return { rank: 'five', counts: groupedCounts, scoringDice: sortedDice, total };
   }
 
   if (groupedCounts[0] === 4) {
-    return { rank: 'four', counts: groupedCounts, total };
+    return { rank: 'four', counts: groupedCounts, scoringDice: sortedDice, total };
   }
 
-  if (groupedCounts[0] === 3 && groupedCounts[1] === 2) {
-    return { rank: 'full_house', counts: groupedCounts, total };
+  if (
+    groupedCounts[0] === 3 &&
+    (groupedCounts[1] === 2 || groupedCounts[1] === 3)
+  ) {
+    return { rank: 'full_house', counts: groupedCounts, scoringDice: sortedDice, total };
   }
 
-  if (isStraight) {
-    return { rank: 'straight', counts: groupedCounts, total };
+  if (bestStraight) {
+    return {
+      rank: 'straight',
+      counts: groupedCounts,
+      scoringDice: bestStraight,
+      total: bestStraight.reduce((sum, value) => sum + value, 0),
+    };
   }
 
   if (groupedCounts[0] === 3) {
-    return { rank: 'three', counts: groupedCounts, total };
+    return { rank: 'three', counts: groupedCounts, scoringDice: sortedDice, total };
   }
 
   if (groupedCounts[0] === 2 && groupedCounts[1] === 2) {
-    return { rank: 'two_pair', counts: groupedCounts, total };
+    return { rank: 'two_pair', counts: groupedCounts, scoringDice: sortedDice, total };
   }
 
   if (groupedCounts[0] === 2) {
-    return { rank: 'pair', counts: groupedCounts, total };
+    return { rank: 'pair', counts: groupedCounts, scoringDice: sortedDice, total };
   }
 
-  return { rank: 'high_card', counts: groupedCounts, total };
+  return { rank: 'high_card', counts: groupedCounts, scoringDice: sortedDice, total };
 };
 
 export const getActionCard = (cardId: string): ActionCardDefinition | undefined =>
@@ -326,7 +342,7 @@ const createBaseScoreContext = (dice: DiceRoll) => {
 
   return {
     // BossScoreContext/JokerEffectContext의 scoringDice는 number[] 기준이라 타입을 맞춰줍니다.
-    scoringDice: [...dice] as number[],
+    scoringDice: [...evaluation.scoringDice],
     handRank: evaluation.rank,
     handBase: HAND_BASE_SCORES[evaluation.rank],
     diceBase: evaluation.total,
@@ -341,9 +357,10 @@ const normalizeBossContext = (ctx: ReturnType<typeof createBaseScoreContext>) =>
 
   return {
     ...ctx,
+    scoringDice: [...evaluation.scoringDice],
     handRank: evaluation.rank,
     handBase: HAND_BASE_SCORES[evaluation.rank],
-    diceBase: ctx.scoringDice.reduce((sum, value) => sum + value, 0),
+    diceBase: evaluation.total,
   };
 };
 

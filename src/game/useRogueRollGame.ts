@@ -34,7 +34,6 @@ import {
 } from './types';
 
 const MAX_JOKERS = 5;
-const MAX_CARDS_PER_HAND = 2;
 const BASE_HAND_DRAW = 3;
 const BASE_DICE_COUNT = 5;
 
@@ -309,13 +308,6 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
     }
 
     setState(currentState => {
-      if (currentState.hand.cardsPlayed >= MAX_CARDS_PER_HAND) {
-        return {
-          ...currentState,
-          message: `Hand당 카드는 최대 ${MAX_CARDS_PER_HAND}장까지 사용할 수 있습니다.`,
-        };
-      }
-
       const cardId = currentState.deck.hand[handIndex];
       const card = getActionCard(cardId);
       if (!card) {
@@ -369,7 +361,6 @@ export const useRogueRollGame = (startingJokerId: string = 'lucky_reroll') => {
           dice: result.dice,
           diceAnimation: changedIndices,
           selectedDice: [],
-          cardsPlayed: currentState.hand.cardsPlayed + 1,
         },
         message: negativeJokerName
           ? `${negativeJokerName} 조커가 네거티브가 되어 슬롯을 차지하지 않게 되었습니다.`
