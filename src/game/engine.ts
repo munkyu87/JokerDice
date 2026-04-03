@@ -9,6 +9,7 @@ import {
   HandRank,
   JokerDefinition,
   JokerEffectContext,
+  JokerProgressMap,
   JokerRarity,
   PurgeOption,
   RewardOption,
@@ -18,7 +19,19 @@ import {
 
 /** 일반 등급 핸드 카드 상점가 (참고용) */
 export const SHOP_HAND_CARD_PRICE = 3;
-export const SHOP_JOKER_PRICE = 6;
+export const SHOP_REROLL_BASE_PRICE = 2;
+export const SHOP_VOUCHER_PRICE = 20;
+const SHOP_VOUCHER_CHANCE = 0.32;
+
+export const getShopJokerPrice = (rarity: JokerRarity): number => {
+  const byRarity: Record<JokerRarity, number> = {
+    common: 6,
+    uncommon: 8,
+    rare: 10,
+    legendary: 12,
+  };
+  return byRarity[rarity];
+};
 
 const ACTION_CARD_RARITY_WEIGHT: Record<ActionCardRarity, number> = {
   common: 48,
@@ -38,6 +51,9 @@ export const getShopHandCardPrice = (rarity: ActionCardRarity): number => {
   return byRarity[rarity];
 };
 
+export const getShopActionCardPrice = (card: ActionCardDefinition): number =>
+  card.pool === 'voucher' ? SHOP_VOUCHER_PRICE : getShopHandCardPrice(card.rarity);
+
 /** 핸드 카드 1장 판매가 — 등급 반영, 해당 등급 상점가 미만 */
 export const getSellPriceHandCard = (rarity: ActionCardRarity): number => {
   const byRarity: Record<ActionCardRarity, number> = {
@@ -51,7 +67,7 @@ export const getSellPriceHandCard = (rarity: ActionCardRarity): number => {
 
 /** 보상·상점에서 중복 없이, 등급 가중치로 액션 카드를 고릅니다. */
 export const pickDistinctActionCards = (count: number, rng: () => number): ActionCardDefinition[] => {
-  const pool = [...ACTION_CARDS];
+  const pool = ACTION_CARDS.filter(card => (card.pool ?? 'standard') === 'standard');
   const result: ActionCardDefinition[] = [];
 
   while (result.length < count && pool.length > 0) {
@@ -74,15 +90,23 @@ export const pickDistinctActionCards = (count: number, rng: () => number): Actio
   return result;
 };
 
+export const pickDistinctVoucherCards = (count: number, rng: () => number): ActionCardDefinition[] => {
+  const pool = shuffle(
+    ACTION_CARDS.filter(card => (card.pool ?? 'standard') === 'voucher'),
+    rng,
+  );
+  return pool.slice(0, count);
+};
+
 /** 조커 1장 판매가 — 등급 반영, 상점 구매가(6G) 미만 */
 export const getSellPriceJoker = (rarity: JokerRarity): number => {
   const byRarity: Record<JokerRarity, number> = {
     common: 2,
-    uncommon: 2,
-    rare: 3,
-    legendary: 4,
+    uncommon: 3,
+    rare: 4,
+    legendary: 5,
   };
-  return Math.min(byRarity[rarity], SHOP_JOKER_PRICE - 1);
+  return Math.min(byRarity[rarity], getShopJokerPrice(rarity) - 1);
 };
 
 const HAND_BASE_SCORES: Record<HandRank, number> = {
@@ -307,12 +331,18 @@ export const getActiveJokerIds = (jokerIds: string[], bossId?: string) => {
   };
 };
 
-export const getHandStartBonus = (jokerIds: string[], bossId?: string) => {
+export const getHandStartBonus = (
+  jokerIds: string[],
+  bossId?: string,
+  jokerProgress: JokerProgressMap = {},
+  currentGold = 0,
+) => {
   const { activeJokerIds } = getActiveJokerIds(jokerIds, bossId);
   let context: JokerEffectContext = {
     trigger: 'onHandStart',
     dice: [] as DiceRoll,
     scoringDice: [],
+    currentGold,
     handRank: 'high_card',
     handBase: 0,
     diceBase: 0,
@@ -324,6 +354,15 @@ export const getHandStartBonus = (jokerIds: string[], bossId?: string) => {
     diceCountBonus: 0,
     handRefreshes: 0,
     goldDelta: 0,
+    jokerProgress,
+    cardsPlayedThisHand: 0,
+    goldSpentThisHand: 0,
+    cardsSoldThisStage: 0,
+    rerollsUsedThisHand: 0,
+    shopPurchasesThisVisit: 0,
+    interestGoldLastSettlement: 0,
+    currentStageTarget: 0,
+    remainingHands: 0,
     notes: [],
   };
 
@@ -337,7 +376,12 @@ export const getHandStartBonus = (jokerIds: string[], bossId?: string) => {
   return context;
 };
 
-const createBaseScoreContext = (dice: DiceRoll) => {
+const createBaseScoreContext = (
+  dice: DiceRoll,
+  handBonusBase = 0,
+  handMultiplierBonus = 0,
+  handNotes: string[] = [],
+) => {
   const evaluation = evaluateHand(dice);
 
   return {
@@ -346,9 +390,9 @@ const createBaseScoreContext = (dice: DiceRoll) => {
     handRank: evaluation.rank,
     handBase: HAND_BASE_SCORES[evaluation.rank],
     diceBase: evaluation.total,
-    bonusBase: 0,
-    multiplier: 1,
-    notes: [] as string[],
+    bonusBase: handBonusBase,
+    multiplier: 1 + handMultiplierBonus,
+    notes: [...handNotes] as string[],
   };
 };
 
@@ -368,13 +412,39 @@ export const scoreDice = ({
   dice,
   jokerIds,
   bossId,
+  jokerProgress = {},
+  currentGold = 0,
+  cardsPlayedThisHand = 0,
+  goldSpentThisHand = 0,
+  cardsSoldThisStage = 0,
+  rerollsUsedThisHand = 0,
+  shopPurchasesThisVisit = 0,
+  interestGoldLastSettlement = 0,
+  currentStageTarget = 0,
+  remainingHands = 0,
+  handBonusBase = 0,
+  handMultiplierBonus = 0,
+  handNotes = [],
 }: {
   dice: DiceRoll;
   jokerIds: string[];
   bossId?: string;
+  jokerProgress?: JokerProgressMap;
+  currentGold?: number;
+  cardsPlayedThisHand?: number;
+  goldSpentThisHand?: number;
+  cardsSoldThisStage?: number;
+  rerollsUsedThisHand?: number;
+  shopPurchasesThisVisit?: number;
+  interestGoldLastSettlement?: number;
+  currentStageTarget?: number;
+  remainingHands?: number;
+  handBonusBase?: number;
+  handMultiplierBonus?: number;
+  handNotes?: string[];
 }): ScoreResult => {
   const boss = getBoss(bossId);
-  let scoreContext = createBaseScoreContext(dice);
+  let scoreContext = createBaseScoreContext(dice, handBonusBase, handMultiplierBonus, handNotes);
 
   if (boss?.applyBeforeJokers) {
     scoreContext = normalizeBossContext(boss.applyBeforeJokers(scoreContext));
@@ -386,6 +456,7 @@ export const scoreDice = ({
     trigger: 'beforeScore',
     dice,
     scoringDice: scoreContext.scoringDice,
+    currentGold,
     handRank: scoreContext.handRank,
     handBase: scoreContext.handBase,
     diceBase: scoreContext.diceBase,
@@ -397,6 +468,15 @@ export const scoreDice = ({
     diceCountBonus: 0,
     handRefreshes: 0,
     goldDelta: 0,
+    jokerProgress,
+    cardsPlayedThisHand,
+    goldSpentThisHand,
+    cardsSoldThisStage,
+    rerollsUsedThisHand,
+    shopPurchasesThisVisit,
+    interestGoldLastSettlement,
+    currentStageTarget,
+    remainingHands,
     notes: scoreContext.notes,
   };
 
@@ -501,9 +581,11 @@ export const createRewardOptions = ({
 
 export const createShopItems = ({
   ownedJokers,
+  rerollPrice = SHOP_REROLL_BASE_PRICE,
   rng = Math.random,
 }: {
   ownedJokers: string[];
+  rerollPrice?: number;
   rng?: () => number;
 }): ShopItem[] => {
   const hasMarketExpansion = ownedJokers.includes('shop_6_slot');
@@ -527,7 +609,7 @@ export const createShopItems = ({
         type: 'reroll',
         title: 'Shop Reroll',
         description: '상점 진열을 새로 섞습니다.',
-        price: 2,
+        price: rerollPrice,
       },
     ],
     rng,
@@ -549,7 +631,7 @@ export const createShopItems = ({
       jokerId: joker.id,
       title: joker.name,
       description: joker.description,
-      price: SHOP_JOKER_PRICE,
+      price: getShopJokerPrice(joker.rarity),
     });
   }
 
@@ -561,9 +643,26 @@ export const createShopItems = ({
       cardId: card.id,
       title: card.name,
       description: card.description,
-      price: getShopHandCardPrice(card.rarity),
+      price: getShopActionCardPrice(card),
     });
   });
+
+  if (rng() < SHOP_VOUCHER_CHANCE) {
+    const voucherCards = pickDistinctVoucherCards(1, rng);
+    voucherCards.forEach(card => {
+      if (items.length >= desiredCount) {
+        return;
+      }
+      items.push({
+        id: `shop-card-${card.id}`,
+        type: 'card',
+        cardId: card.id,
+        title: card.name,
+        description: card.description,
+        price: getShopActionCardPrice(card),
+      });
+    });
+  }
 
   for (let i = 0; i < utilityItems.length && items.length < desiredCount; i += 1) {
     items.push(utilityItems[i]);

@@ -24,17 +24,18 @@ import {
   getActionCard,
   getJoker,
   getSellPriceHandCard,
+  getShopActionCardPrice,
   getSellPriceJoker,
-  getShopHandCardPrice,
-  SHOP_JOKER_PRICE,
+  getShopJokerPrice,
 } from '../game/engine';
 import { getActionCardPreviewImage } from '../game/actionCardPreviewImages';
+import { getGrowthJokerDetail } from '../game/data';
 import { getJokerPreviewImage } from '../game/jokerPreviewImages';
 import {
   getRewardUtilityPreviewImage,
   getShopUtilityPreviewImage,
 } from '../game/utilityPreviewImages';
-import { useRogueRollGame } from '../game/useRogueRollGame';
+import { RogueRollGameState, useRogueRollGame } from '../game/useRogueRollGame';
 import { DiceValue, HandRank, JokerRarity } from '../game/types';
 
 const HAND_RANK_LABELS: Record<HandRank, string> = {
@@ -253,8 +254,8 @@ const OverlayModal = ({
         <View style={styles.modalHeader}>
           <Text style={styles.modalTitle}>{title}</Text>
           {dismissible ? (
-            <Pressable onPress={onClose} style={styles.iconButton}>
-              <Text style={styles.iconButtonText}>닫기</Text>
+            <Pressable onPress={onClose} style={styles.modalCloseButton} accessibilityLabel="닫기">
+              <Text style={styles.modalCloseIcon}>✕</Text>
             </Pressable>
           ) : null}
         </View>
@@ -380,6 +381,74 @@ const DropZoneHandPreview = ({ cardId }: { cardId: string }) => {
   );
 };
 
+const DeckListCardTile = ({
+  cardId,
+  index,
+  obscured = false,
+  selected = false,
+  onPress,
+}: {
+  cardId: string;
+  index: number;
+  obscured?: boolean;
+  selected?: boolean;
+  onPress: () => void;
+}) => {
+  const card = getActionCard(cardId);
+  if (!card) {
+    return null;
+  }
+
+  const image = getActionCardPreviewImage(cardId);
+  const theme = getActionTheme(card.tags);
+  const rarityTheme = JOKER_RARITY_COLORS[card.rarity];
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[
+        styles.deckListGridCard,
+        {
+          borderColor: rarityTheme?.frame ?? theme.frame,
+          backgroundColor: theme.surface,
+        },
+        selected ? styles.deckListGridCardSelected : undefined,
+      ]}>
+      {image ? (
+        <Image
+          source={image}
+          style={[styles.deckListGridCardImage, obscured ? styles.deckListGridCardImageObscured : undefined]}
+          resizeMode="cover"
+          blurRadius={obscured ? 7 : 0}
+        />
+      ) : (
+        <View
+          style={[
+            styles.deckListGridCardFallback,
+            {
+              backgroundColor: theme.surface,
+              borderColor: theme.frame,
+              opacity: obscured ? 0.55 : 1,
+            },
+          ]}>
+          <View pointerEvents="none" style={styles.cardFaceShine} />
+          <Text style={[styles.cardGlyph, { color: theme.accent }]}>{card.name.slice(0, 1)}</Text>
+          <Text numberOfLines={1} style={styles.handCardTitle}>
+            {card.name}
+          </Text>
+        </View>
+      )}
+      {obscured ? <View pointerEvents="none" style={styles.deckListGridCardObscuredOverlay} /> : null}
+      <View style={styles.deckListGridCardBadge}>
+        <Text style={styles.deckListGridCardBadgeText}>{index + 1}</Text>
+      </View>
+      <View style={styles.deckListGridCardMetaPill}>
+        <Text style={styles.deckListGridCardMetaPillText}>{JOKER_RARITY_LABELS[card.rarity]}</Text>
+      </View>
+    </Pressable>
+  );
+};
+
 const DropZoneJokerPreview = ({ jokerId }: { jokerId: string }) => {
   const joker = getJoker(jokerId);
   if (!joker) {
@@ -407,9 +476,13 @@ const DropZoneJokerPreview = ({ jokerId }: { jokerId: string }) => {
 
 export function RogueRollScreen({
   startingJokerId = 'lucky_reroll',
+  initialState,
+  onStateChange,
   onBackToLobby,
 }: {
   startingJokerId?: string;
+  initialState?: RogueRollGameState;
+  onStateChange?: (state: RogueRollGameState) => void;
   onBackToLobby?: () => void;
 }) {
   const isDarkMode = useColorScheme() === 'dark';
@@ -418,6 +491,7 @@ export function RogueRollScreen({
   const [showGuide, setShowGuide] = useState(false);
   const [showRunInfo, setShowRunInfo] = useState(false);
   const [showDeckList, setShowDeckList] = useState(false);
+  const [selectedDeckListCardKey, setSelectedDeckListCardKey] = useState<string | null>(null);
   const [cardRowWidth, setCardRowWidth] = useState(0);
   const [selectedCardIndex, setSelectedCardIndex] = useState<number | null>(null);
   const [selectedJokerIndex, setSelectedJokerIndex] = useState<number | null>(null);
@@ -453,7 +527,7 @@ export function RogueRollScreen({
     continueFromShop,
     continueFromSettlement,
     restartRun,
-  } = useRogueRollGame(startingJokerId);
+  } = useRogueRollGame(startingJokerId, { initialState, onStateChange });
   const visibleCardSlotCount = Math.max(3, state.hand.drawCount, state.deck.hand.length);
   const [displayDice, setDisplayDice] = useState(state.hand.dice);
   const diceAnimationsRef = useRef(
@@ -469,7 +543,7 @@ export function RogueRollScreen({
   const cardTooltipAnimation = useRef(new Animated.Value(0)).current;
   const jokerTooltipAnimation = useRef(new Animated.Value(0)).current;
   const settlementValueAnimationsRef = useRef(
-    Array.from({ length: 7 }, () => new Animated.Value(0)),
+    Array.from({ length: 8 }, () => new Animated.Value(0)),
   );
   const useZoneRef = useRef<View | null>(null);
   const sellZoneRef = useRef<View | null>(null);
@@ -521,6 +595,9 @@ export function RogueRollScreen({
   const selectedJokerId =
     selectedJokerIndex !== null ? state.jokers[selectedJokerIndex] : undefined;
   const selectedJoker = selectedJokerId ? getJoker(selectedJokerId) : undefined;
+  const selectedJokerGrowthDetail = selectedJoker
+    ? getGrowthJokerDetail(selectedJoker.id, state.jokerProgress)
+    : undefined;
   const selectedRewardOption =
     state.phase === 'reward'
       ? state.rewardOptions.find(option => option.id === selectedRewardId) ?? null
@@ -554,7 +631,12 @@ export function RogueRollScreen({
   const reorderJokersRef = useRef(reorderJokers);
   const sellJokerRef = useRef(sellJoker);
   const blindTypeLabel = stageDefinition.name;
-  const blindRuleText = boss ? boss.description : undefined;
+  const blindRuleText =
+    state.ignoredBossAnte === state.stage.ante && state.stage.stageIndex === 2
+      ? 'Boss Waiver 활성화로 이번 Ante의 보스 효과가 무시됩니다.'
+      : boss
+        ? boss.description
+        : undefined;
   const dismissActiveTooltip = useCallback(() => {
     setSelectedCardIndex(null);
     setSelectedJokerIndex(null);
@@ -596,13 +678,29 @@ export function RogueRollScreen({
       left: `${leftPercent}%` as const,
     };
   }, [renderedJokerCount, selectedJokerIndex]);
-  const deckSections = useMemo(
+  const deckListCards = useMemo(
     () => [
-      { title: `손패 ${state.deck.hand.length}`, cards: state.deck.hand },
-      { title: `드로우 ${state.deck.drawPile.length}`, cards: state.deck.drawPile },
-      { title: `버림 ${state.deck.discardPile.length}`, cards: state.deck.discardPile },
+      ...state.deck.hand.map((cardId, index) => ({
+        key: `hand-${cardId}-${index}`,
+        cardId,
+        obscured: true,
+      })),
+      ...state.deck.drawPile.map((cardId, index) => ({
+        key: `draw-${cardId}-${index}`,
+        cardId,
+        obscured: false,
+      })),
     ],
-    [state.deck.discardPile, state.deck.drawPile, state.deck.hand],
+    [state.deck.drawPile, state.deck.hand],
+  );
+  const selectedDeckListCard = useMemo(
+    () => deckListCards.find(card => card.key === selectedDeckListCardKey) ?? deckListCards[0] ?? null,
+    [deckListCards, selectedDeckListCardKey],
+  );
+  const selectedDeckListActionCard = useMemo(
+    () =>
+      selectedDeckListCard ? getActionCard(selectedDeckListCard.cardId) : null,
+    [selectedDeckListCard],
   );
 
   useEffect(() => {
@@ -626,6 +724,22 @@ export function RogueRollScreen({
     setSelectedShopItemId(state.shopItems[0]?.id ?? null);
     setShopTooltipId(state.shopItems[0]?.id ?? null);
   }, [state.phase, state.shopItems]);
+
+  useEffect(() => {
+    if (!showDeckList) {
+      setSelectedDeckListCardKey(null);
+      return;
+    }
+
+    if (deckListCards.length === 0) {
+      setSelectedDeckListCardKey(null);
+      return;
+    }
+
+    if (!selectedDeckListCardKey || !deckListCards.some(card => card.key === selectedDeckListCardKey)) {
+      setSelectedDeckListCardKey(deckListCards[0].key);
+    }
+  }, [deckListCards, selectedDeckListCardKey, showDeckList]);
 
   while (cardSelectAnimationsRef.current.length < visibleCardSlotCount) {
     cardSelectAnimationsRef.current.push(new Animated.Value(0));
@@ -1254,13 +1368,13 @@ export function RogueRollScreen({
             {draggingHandCardDef ? (
               <Text style={styles.topSellZonePriceHint}>
                 핸드 카드 판매 +{getSellPriceHandCard(draggingHandCardDef.rarity)}G · 상점 유사 등급{' '}
-                {getShopHandCardPrice(draggingHandCardDef.rarity)}G
+                {getShopActionCardPrice(draggingHandCardDef)}G
               </Text>
             ) : draggingJokerIndex !== null && state.jokers[draggingJokerIndex] ? (
               <Text style={styles.topSellZonePriceHint}>
                 조커 판매 +
                 {getSellPriceJoker(getJoker(state.jokers[draggingJokerIndex])!.rarity)}G · 상점 구매{' '}
-                {SHOP_JOKER_PRICE}G
+                {getShopJokerPrice(getJoker(state.jokers[draggingJokerIndex])!.rarity)}G
               </Text>
             ) : null}
             <Text style={styles.topSellZoneLabel}>
@@ -1374,6 +1488,12 @@ export function RogueRollScreen({
                 ]}>
                 <Text style={styles.cardTooltipTitle}>{selectedJoker.name}</Text>
                 <Text style={styles.cardTooltipBody}>{selectedJoker.description}</Text>
+                {selectedJokerGrowthDetail ? (
+                  <View style={styles.jokerGrowthCard}>
+                    <Text style={styles.jokerGrowthCurrent}>{selectedJokerGrowthDetail.current}</Text>
+                    <Text style={styles.jokerGrowthRule}>{selectedJokerGrowthDetail.growthRule}</Text>
+                  </View>
+                ) : null}
                 <Text style={styles.jokerTooltipMeta}>
                   {JOKER_RARITY_LABELS[selectedJoker.rarity]} · {JOKER_TRIGGER_LABELS[selectedJoker.trigger]}
                   {negativeJokerIds.includes(selectedJoker.id) ? ' · 네거티브' : ''}
@@ -1664,6 +1784,7 @@ export function RogueRollScreen({
               const actionPreviewImage = card ? getActionCardPreviewImage(card.id) : undefined;
               const isPreviewing = selectedCardIndex === index;
               const theme = getActionTheme(card?.tags);
+              const isVoucherCard = card?.pool === 'voucher';
               const actionRarityTheme = card ? JOKER_RARITY_COLORS[card.rarity] : undefined;
               const badgeLabel = card ? TAG_LABELS[getPrimaryTag(card.tags)] : 'A';
               const animation = cardSelectAnimationsRef.current[index];
@@ -1723,6 +1844,7 @@ export function RogueRollScreen({
                             borderColor: actionRarityTheme?.frame ?? theme.frame,
                           }
                         : undefined,
+                      isVoucherCard ? styles.voucherCardShell : undefined,
                       isCompact ? styles.handCardCompact : undefined,
                       isPreviewing ? styles.handCardActive : undefined,
                       isPreviewing
@@ -1739,6 +1861,11 @@ export function RogueRollScreen({
                         resizeMode="cover"
                         style={styles.handCardArtCard}>
                         <View pointerEvents="none" style={styles.handCardArtOverlay} />
+                        {isVoucherCard ? (
+                          <View style={styles.voucherBadgeOnArt}>
+                            <Text style={styles.voucherBadgeText}>VOUCHER</Text>
+                          </View>
+                        ) : null}
                         <View style={styles.cardTopRow}>
                           <Text
                             style={[
@@ -1758,11 +1885,17 @@ export function RogueRollScreen({
                     ) : (
                       <>
                         <View pointerEvents="none" style={styles.cardFrameBorder} />
+                        {isVoucherCard ? <View pointerEvents="none" style={styles.voucherCardFrameGlow} /> : null}
                         <View
                           pointerEvents="none"
                           style={[styles.actionFrameStripe, card ? { backgroundColor: theme.frame } : undefined]}
                         />
                         <View pointerEvents="none" style={styles.cardFrameSpark} />
+                        {isVoucherCard ? (
+                          <View style={styles.voucherBadgeInline}>
+                            <Text style={styles.voucherBadgeText}>V</Text>
+                          </View>
+                        ) : null}
                         <View style={styles.cardTopRow}>
                           <Text
                             style={[styles.miniBadge, card ? { backgroundColor: theme.badge, color: theme.accent } : undefined]}>
@@ -1895,29 +2028,53 @@ export function RogueRollScreen({
         </OverlayModal>
 
         <OverlayModal visible={showDeckList} title="덱 리스트" onClose={() => setShowDeckList(false)}>
-          <Text style={styles.modalIntro}>현재 손패, 드로우 더미, 버림 더미 순서로 보여줍니다.</Text>
-          <View style={styles.deckListSectionWrap}>
-            {deckSections.map(section => (
-              <View key={section.title} style={styles.deckListSection}>
-                <Text style={styles.deckListSectionTitle}>{section.title}</Text>
-                {section.cards.length > 0 ? (
-                  <View style={styles.deckListItems}>
-                    {section.cards.map((cardId, index) => {
-                      const deckCard = getActionCard(cardId);
-                      return (
-                        <Text key={`${section.title}-${cardId}-${index}`} style={styles.deckListItem}>
-                          {index + 1}. {deckCard?.name ?? cardId}
-                          {deckCard ? ` · ${JOKER_RARITY_LABELS[deckCard.rarity]}` : ''}
-                        </Text>
-                      );
-                    })}
-                  </View>
-                ) : (
-                  <Text style={styles.deckListEmpty}>비어 있음</Text>
-                )}
-              </View>
-            ))}
+          <Text style={styles.modalIntro}>손패가 앞쪽에, 이어서 드로우 더미가 순서대로 표시됩니다. 카드를 누르면 상세 정보가 아래에 나옵니다.</Text>
+          <View style={styles.deckListSummaryRow}>
+            <View style={styles.deckListSummaryPill}>
+              <Text style={styles.deckListSummaryPillText}>손패 {state.deck.hand.length}</Text>
+            </View>
+            <View style={styles.deckListSummaryPill}>
+              <Text style={styles.deckListSummaryPillText}>드로우 {state.deck.drawPile.length}</Text>
+            </View>
           </View>
+          <ScrollView
+            style={styles.deckListScroll}
+            contentContainerStyle={styles.deckListSectionWrap}
+            showsVerticalScrollIndicator={false}>
+            {deckListCards.length > 0 ? (
+              <View style={styles.deckListGrid}>
+                {deckListCards.map((card, index) => (
+                  <DeckListCardTile
+                    key={card.key}
+                    cardId={card.cardId}
+                    index={index}
+                    obscured={card.obscured}
+                    selected={selectedDeckListCard?.key === card.key}
+                    onPress={() => setSelectedDeckListCardKey(card.key)}
+                  />
+                ))}
+              </View>
+            ) : (
+              <Text style={styles.deckListEmpty}>비어 있음</Text>
+            )}
+          </ScrollView>
+          {selectedDeckListCard ? (
+            <View style={styles.deckListDetailCard}>
+              <View style={styles.deckListDetailHeader}>
+                <Text style={styles.deckListDetailTitle}>
+                  {selectedDeckListActionCard?.name ?? selectedDeckListCard.cardId}
+                </Text>
+                <Text style={styles.deckListDetailMeta}>
+                  {selectedDeckListActionCard
+                    ? JOKER_RARITY_LABELS[selectedDeckListActionCard.rarity]
+                    : ''}
+                </Text>
+              </View>
+              <Text style={styles.deckListDetailBody}>
+                {selectedDeckListActionCard?.description ?? '카드 정보를 불러오지 못했습니다.'}
+              </Text>
+            </View>
+          ) : null}
         </OverlayModal>
 
         <OverlayModal visible={state.phase !== 'playing'} title={overlayTitle} onClose={() => undefined} dismissible={false}>
@@ -2033,9 +2190,8 @@ export function RogueRollScreen({
                     +{state.settlement.efficiencyGold}G
                   </Animated.Text>
                 </View>
-                <View style={styles.settlementDivider} />
                 <View style={styles.settlementRow}>
-                  <Text style={styles.settlementRowLabel}>이번 Hand 직전 보유</Text>
+                  <Text style={styles.settlementRowLabel}>이자 (5G당 +1, 최대 +5)</Text>
                   <Animated.Text
                     style={[
                       styles.settlementRowValue,
@@ -2044,6 +2200,27 @@ export function RogueRollScreen({
                         transform: [
                           {
                             translateX: settlementValueAnimationsRef.current[5].interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [12, 0],
+                            }),
+                          },
+                        ],
+                      },
+                    ]}>
+                    +{state.settlement.interestGold}G
+                  </Animated.Text>
+                </View>
+                <View style={styles.settlementDivider} />
+                <View style={styles.settlementRow}>
+                  <Text style={styles.settlementRowLabel}>이번 Hand 직전 보유</Text>
+                  <Animated.Text
+                    style={[
+                      styles.settlementRowValue,
+                      {
+                        opacity: settlementValueAnimationsRef.current[6],
+                        transform: [
+                          {
+                            translateX: settlementValueAnimationsRef.current[6].interpolate({
                               inputRange: [0, 1],
                               outputRange: [12, 0],
                             }),
@@ -2060,16 +2237,16 @@ export function RogueRollScreen({
                     style={[
                       styles.settlementRowValueStrong,
                       {
-                        opacity: settlementValueAnimationsRef.current[6],
+                        opacity: settlementValueAnimationsRef.current[7],
                         transform: [
                           {
-                            translateX: settlementValueAnimationsRef.current[6].interpolate({
+                            translateX: settlementValueAnimationsRef.current[7].interpolate({
                               inputRange: [0, 1],
                               outputRange: [16, 0],
                             }),
                           },
                           {
-                            scale: settlementValueAnimationsRef.current[6].interpolate({
+                            scale: settlementValueAnimationsRef.current[7].interpolate({
                               inputRange: [0, 1],
                               outputRange: [0.96, 1],
                             }),
@@ -2104,6 +2281,7 @@ export function RogueRollScreen({
                   const actionCard = option.type === 'card' ? getActionCard(option.cardId) : undefined;
                   const actionPreviewImage =
                     option.type === 'card' ? getActionCardPreviewImage(option.cardId) : undefined;
+                  const isVoucherCard = actionCard?.pool === 'voucher';
                   const actionTheme = actionCard ? getActionTheme(actionCard.tags) : undefined;
                   const joker = option.type === 'joker' ? getJoker(option.jokerId) : undefined;
                   const rarityTheme = joker ? JOKER_RARITY_COLORS[joker.rarity] : undefined;
@@ -2125,6 +2303,7 @@ export function RogueRollScreen({
                         option.type === 'card' && actionRarityTheme
                           ? { borderColor: actionRarityTheme.frame }
                           : undefined,
+                        isVoucherCard ? styles.voucherCardShell : undefined,
                         option.type === 'card' && isSelected && actionRarityTheme
                           ? { shadowColor: actionRarityTheme.frame, backgroundColor: '#e6f0ff' }
                           : undefined,
@@ -2137,6 +2316,11 @@ export function RogueRollScreen({
                       ) : actionPreviewImage ? (
                         <View style={styles.rewardCardArtFrame}>
                           <Image source={actionPreviewImage} style={styles.rewardCardImage} resizeMode="cover" />
+                          {isVoucherCard ? (
+                            <View style={styles.voucherBadgeOnArt}>
+                              <Text style={styles.voucherBadgeText}>VOUCHER</Text>
+                            </View>
+                          ) : null}
                         </View>
                       ) : utilityPreviewImage ? (
                         <View style={styles.rewardCardArtFrame}>
@@ -2151,8 +2335,14 @@ export function RogueRollScreen({
                               backgroundColor: actionTheme.surface,
                               borderColor: actionTheme.frame,
                             },
+                            isVoucherCard ? styles.voucherCardFace : undefined,
                           ]}>
                           <View pointerEvents="none" style={styles.cardFaceShine} />
+                          {isVoucherCard ? (
+                            <View style={styles.voucherBadgeInline}>
+                              <Text style={styles.voucherBadgeText}>V</Text>
+                            </View>
+                          ) : null}
                           <Text style={[styles.cardGlyph, { color: actionTheme.accent }]}>
                             {actionCard.name.slice(0, 1)}
                           </Text>
@@ -2211,6 +2401,7 @@ export function RogueRollScreen({
                   const actionCard = item.type === 'card' ? getActionCard(item.cardId) : undefined;
                   const actionPreviewImage =
                     item.type === 'card' ? getActionCardPreviewImage(item.cardId) : undefined;
+                  const isVoucherCard = actionCard?.pool === 'voucher';
                   const actionTheme = actionCard ? getActionTheme(actionCard.tags) : undefined;
                   const joker = item.type === 'joker' ? getJoker(item.jokerId) : undefined;
                   const rarityTheme = joker ? JOKER_RARITY_COLORS[joker.rarity] : undefined;
@@ -2232,6 +2423,7 @@ export function RogueRollScreen({
                         item.type === 'card' && actionRarityTheme
                           ? { borderColor: actionRarityTheme.frame }
                           : undefined,
+                        isVoucherCard ? styles.voucherCardShell : undefined,
                         item.type === 'card' && isSelected && actionRarityTheme
                           ? { shadowColor: actionRarityTheme.frame, backgroundColor: '#e6f0ff' }
                           : undefined,
@@ -2244,6 +2436,11 @@ export function RogueRollScreen({
                       ) : actionPreviewImage ? (
                         <View style={styles.rewardCardArtFrame}>
                           <Image source={actionPreviewImage} style={styles.rewardCardImage} resizeMode="cover" />
+                          {isVoucherCard ? (
+                            <View style={styles.voucherBadgeOnArt}>
+                              <Text style={styles.voucherBadgeText}>VOUCHER</Text>
+                            </View>
+                          ) : null}
                         </View>
                       ) : utilityPreviewImage ? (
                         <View style={styles.rewardCardArtFrame}>
@@ -2258,8 +2455,14 @@ export function RogueRollScreen({
                               backgroundColor: actionTheme.surface,
                               borderColor: actionTheme.frame,
                             },
+                            isVoucherCard ? styles.voucherCardFace : undefined,
                           ]}>
                           <View pointerEvents="none" style={styles.cardFaceShine} />
+                          {isVoucherCard ? (
+                            <View style={styles.voucherBadgeInline}>
+                              <Text style={styles.voucherBadgeText}>V</Text>
+                            </View>
+                          ) : null}
                           <Text style={[styles.cardGlyph, { color: actionTheme.accent }]}>
                             {actionCard.name.slice(0, 1)}
                           </Text>
@@ -2626,6 +2829,27 @@ const styles = StyleSheet.create({
     color: '#29516f',
     fontSize: 11,
     fontWeight: '700',
+  },
+  modalCloseButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e4f1ff',
+    borderWidth: 1,
+    borderColor: '#cde2f7',
+    shadowColor: '#5b9de1',
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  modalCloseIcon: {
+    fontSize: 16,
+    lineHeight: 16,
+    fontWeight: '900',
+    color: '#2e5472',
   },
   scoreValue: {
     fontSize: 28,
@@ -3266,6 +3490,26 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#4e79a0',
   },
+  jokerGrowthCard: {
+    marginTop: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#cfe1f2',
+    backgroundColor: '#eef6ff',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 3,
+  },
+  jokerGrowthCurrent: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#185cc4',
+  },
+  jokerGrowthRule: {
+    fontSize: 11,
+    lineHeight: 15,
+    color: '#4e6f8d',
+  },
   jokerTooltipArrow: {
     position: 'absolute',
     bottom: -8,
@@ -3428,6 +3672,16 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(11, 20, 36, 0.16)',
   },
+  voucherBadgeOnArt: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: 'rgba(66, 35, 3, 0.84)',
+    zIndex: 2,
+  },
   handCardMiniBadgeOnImage: {
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.65)',
@@ -3444,6 +3698,36 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#f8fbff',
     textAlign: 'center',
+  },
+  voucherCardShell: {
+    borderStyle: 'dashed',
+    borderWidth: 2,
+    shadowColor: '#f0b94b',
+  },
+  voucherCardFrameGlow: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: 'rgba(240, 185, 75, 0.72)',
+  },
+  voucherBadgeInline: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(66, 35, 3, 0.84)',
+    zIndex: 2,
+    paddingHorizontal: 4,
+  },
+  voucherBadgeText: {
+    fontSize: 7,
+    fontWeight: '900',
+    color: '#fff5d8',
+    letterSpacing: 0.4,
   },
   bottomBar: {
     flex: 0.42,
@@ -3637,30 +3921,136 @@ const styles = StyleSheet.create({
     color: '#516173',
   },
   deckListSectionWrap: {
-    gap: 10,
+    paddingBottom: 6,
   },
-  deckListSection: {
-    borderRadius: 14,
-    backgroundColor: '#ebf1f8',
-    padding: 12,
-    gap: 6,
+  deckListScroll: {
+    flexGrow: 0,
   },
-  deckListSectionTitle: {
-    fontSize: 13,
+  deckListSummaryRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  deckListSummaryPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: '#e7f0fb',
+    borderWidth: 1,
+    borderColor: '#c8dbef',
+  },
+  deckListSummaryPillText: {
+    fontSize: 11,
     fontWeight: '800',
-    color: '#102033',
+    color: '#345370',
   },
-  deckListItems: {
-    gap: 4,
+  deckListGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    justifyContent: 'flex-start',
   },
-  deckListItem: {
-    fontSize: 12,
-    lineHeight: 16,
-    color: '#516173',
+  deckListGridCard: {
+    width: '23.5%',
+    aspectRatio: ACTION_CARD_LIST_ASPECT_RATIO,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    overflow: 'hidden',
+    position: 'relative',
+    justifyContent: 'flex-end',
+    backgroundColor: '#dbe6f3',
+  },
+  deckListGridCardSelected: {
+    shadowOpacity: 0.24,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
+    transform: [{ translateY: -1 }, { scale: 1.02 }],
+  },
+  deckListGridCardImage: {
+    ...StyleSheet.absoluteFillObject,
+    width: '100%',
+    height: '100%',
+  },
+  deckListGridCardImageObscured: {
+    opacity: 0.68,
+  },
+  deckListGridCardFallback: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    paddingBottom: 8,
+    borderWidth: 1,
+  },
+  deckListGridCardObscuredOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(22, 33, 49, 0.22)',
+  },
+  deckListGridCardBadge: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 999,
+    backgroundColor: 'rgba(12, 21, 33, 0.76)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  deckListGridCardBadgeText: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: '#f8fbff',
+  },
+  deckListGridCardMetaPill: {
+    position: 'absolute',
+    right: 4,
+    bottom: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: 'rgba(9, 18, 31, 0.72)',
+  },
+  deckListGridCardMetaPillText: {
+    fontSize: 7,
+    fontWeight: '700',
+    color: '#eef6ff',
   },
   deckListEmpty: {
     fontSize: 12,
     color: '#7a8b9c',
+  },
+  deckListDetailCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  deckListDetailHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  deckListDetailTitle: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#173450',
+  },
+  deckListDetailMeta: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#366ea3',
+  },
+  deckListDetailBody: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#4c6f8d',
   },
   overlayList: {
     gap: 10,
@@ -3807,6 +4197,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: 'hidden',
     position: 'relative',
+  },
+  voucherCardFace: {
+    borderWidth: 2,
+    borderColor: '#f0b94b',
+    backgroundColor: '#fff8e8',
   },
   rewardCardPlaceholderText: {
     fontSize: 26,

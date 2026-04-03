@@ -94,8 +94,10 @@ function ModeTitleVisual({
 
 export function LobbyScreen({
   onStartGame,
+  hasContinueGame = false,
 }: {
-  onStartGame: (mode: DieMode, startingJokerId: string) => void;
+  onStartGame: (mode: DieMode, startingJokerId: string, startMode: 'new' | 'continue') => void;
+  hasContinueGame?: boolean;
 }) {
   const [selectedMode, setSelectedMode] = useState<DieMode>('white');
   const selectedModeRef = useRef(selectedMode);
@@ -177,6 +179,7 @@ export function LobbyScreen({
 
   const [showJokerGuide, setShowJokerGuide] = useState(false);
   const [showHandCardGuide, setShowHandCardGuide] = useState(false);
+  const [showStartChoiceModal, setShowStartChoiceModal] = useState(false);
   const [selectedJokerId, setSelectedJokerId] = useState<string>(JOKERS[0]?.id ?? 'lucky_reroll');
   const [showStartReveal, setShowStartReveal] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -273,6 +276,33 @@ export function LobbyScreen({
     });
   };
 
+  const handleStartButtonPress = () => {
+    if (isStarting || (!selectedModeOption.available && !hasContinueGame)) {
+      return;
+    }
+
+    if (hasContinueGame) {
+      setShowStartChoiceModal(true);
+      return;
+    }
+
+    handleStartRun();
+  };
+
+  const handleContinueRun = () => {
+    setShowStartChoiceModal(false);
+    onStartGame(selectedMode, selectedJokerId, 'continue');
+  };
+
+  const handleStartNewRun = () => {
+    if (!selectedModeOption.available) {
+      return;
+    }
+
+    setShowStartChoiceModal(false);
+    handleStartRun();
+  };
+
   const handleConfirmStart = () => {
     if (isStartingTransition || !revealedStartJokerId) {
       return;
@@ -333,7 +363,7 @@ export function LobbyScreen({
       ]).start(() => {
         setShowStartOverlay(false);
         setIsStartingTransition(false);
-        onStartGame(selectedMode, revealedStartJokerId);
+        onStartGame(selectedMode, revealedStartJokerId, 'new');
       });
     });
   };
@@ -478,9 +508,12 @@ export function LobbyScreen({
                 </Pressable>
               </View>
               <Pressable
-                onPress={handleStartRun}
-                style={[styles.startButton, !selectedModeOption.available ? styles.startButtonDisabled : undefined]}
-                disabled={isStarting || !selectedModeOption.available}
+                onPress={handleStartButtonPress}
+                style={[
+                  styles.startButton,
+                  !selectedModeOption.available && !hasContinueGame ? styles.startButtonDisabled : undefined,
+                ]}
+                disabled={isStarting || (!selectedModeOption.available && !hasContinueGame)}
                 accessibilityLabel="게임 시작"
                 accessibilityRole="button">
                 <Image
@@ -494,6 +527,28 @@ export function LobbyScreen({
           </View>
         </View>
       </View>
+
+      <Modal animationType="fade" transparent visible={showStartChoiceModal}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.startChoiceCard}>
+            <Text style={styles.startChoiceTitle}>저장된 런이 있습니다</Text>
+            <View style={styles.startChoiceButtonColumn}>
+              <Pressable onPress={handleContinueRun} style={[styles.startChoiceButton, styles.startChoicePrimaryButton]}>
+                <Text style={[styles.startChoiceButtonText, styles.startChoicePrimaryButtonText]}>계속하기</Text>
+              </Pressable>
+              <Pressable
+                onPress={handleStartNewRun}
+                style={[styles.startChoiceButton, !selectedModeOption.available ? styles.startChoiceButtonDisabled : undefined]}
+                disabled={!selectedModeOption.available}>
+                <Text style={styles.startChoiceButtonText}>새 게임</Text>
+              </Pressable>
+              <Pressable onPress={() => setShowStartChoiceModal(false)} style={styles.startChoiceGhostButton}>
+                <Text style={styles.startChoiceGhostButtonText}>취소</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {showStartOverlay ? (
         <Animated.View
@@ -590,8 +645,11 @@ export function LobbyScreen({
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>핸드 카드 목록</Text>
-              <Pressable onPress={() => setShowHandCardGuide(false)} style={styles.modalCloseButton}>
-                <Text style={styles.modalCloseText}>닫기</Text>
+              <Pressable
+                onPress={() => setShowHandCardGuide(false)}
+                style={styles.modalCloseButton}
+                accessibilityLabel="닫기">
+                <Text style={styles.modalCloseIcon}>✕</Text>
               </Pressable>
             </View>
             <Text style={styles.handCardGuideIntro}>
@@ -623,10 +681,22 @@ export function LobbyScreen({
                       const primaryTag = card.tags[0] ?? 'consistency';
                       const tag = ACTION_TAG_LABEL[primaryTag] ?? primaryTag.toUpperCase();
                       const rarityColors = JOKER_RARITY_COLORS[card.rarity];
+                      const isVoucherCard = card.pool === 'voucher';
 
                       return (
-                        <View key={card.id} style={[styles.handCardGuideRow, { borderColor: rarityColors.border }]}>
-                          <View style={[styles.handCardGuideThumbWrap, { borderColor: rarityColors.border }]}>
+                        <View
+                          key={card.id}
+                          style={[
+                            styles.handCardGuideRow,
+                            { borderColor: rarityColors.border },
+                            isVoucherCard ? styles.voucherGuideRow : undefined,
+                          ]}>
+                          <View
+                            style={[
+                              styles.handCardGuideThumbWrap,
+                              { borderColor: rarityColors.border },
+                              isVoucherCard ? styles.voucherGuideThumbWrap : undefined,
+                            ]}>
                             {preview ? (
                               <Image source={preview} style={styles.handCardGuideThumb} resizeMode="cover" />
                             ) : (
@@ -640,6 +710,11 @@ export function LobbyScreen({
                                 </Text>
                               </View>
                             )}
+                            {isVoucherCard ? (
+                              <View style={styles.voucherGuideBadge}>
+                                <Text style={styles.voucherGuideBadgeText}>VOUCHER</Text>
+                              </View>
+                            ) : null}
                           </View>
                           <View style={styles.handCardGuideBody}>
                             <View style={styles.handCardGuideTitleRow}>
@@ -656,6 +731,9 @@ export function LobbyScreen({
                                   {card.rarity === 'legendary' ? '★ ' : ''}
                                   {JOKER_RARITY_LABELS[card.rarity]}
                                 </Text>
+                                {isVoucherCard ? (
+                                  <Text style={styles.voucherGuideTypeBadge}>영구 바우처</Text>
+                                ) : null}
                                 <Text style={styles.handCardGuideTag}>{tag}</Text>
                               </View>
                             </View>
@@ -680,8 +758,11 @@ export function LobbyScreen({
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>조커 리스트</Text>
-              <Pressable onPress={() => setShowJokerGuide(false)} style={styles.modalCloseButton}>
-                <Text style={styles.modalCloseText}>닫기</Text>
+              <Pressable
+                onPress={() => setShowJokerGuide(false)}
+                style={styles.modalCloseButton}
+                accessibilityLabel="닫기">
+                <Text style={styles.modalCloseIcon}>✕</Text>
               </Pressable>
             </View>
 
@@ -1033,6 +1114,70 @@ const styles = StyleSheet.create({
     // backgroundColor: 'red',
     height: 100,
   },
+  startChoiceCard: {
+    backgroundColor: '#f8fbff',
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: '#cfe2f5',
+    paddingHorizontal: 18,
+    paddingTop: 24,
+    paddingBottom: 16,
+    gap: 14,
+    shadowColor: '#143a68',
+    shadowOpacity: 0.16,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
+  },
+  startChoiceTitle: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#173450',
+    textAlign: 'center',
+  },
+  startChoiceButtonColumn: {
+    gap: 8,
+  },
+  startChoiceButton: {
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#eef5fc',
+    borderWidth: 1,
+    borderColor: '#cadaec',
+  },
+  startChoiceButtonDisabled: {
+    opacity: 0.45,
+  },
+  startChoicePrimaryButton: {
+    backgroundColor: '#2f7ae5',
+    borderColor: '#7bb1ff',
+    shadowColor: '#2f7ae5',
+    shadowOpacity: 0.24,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 5,
+  },
+  startChoiceButtonText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#294861',
+  },
+  startChoicePrimaryButtonText: {
+    color: '#ffffff',
+  },
+  startChoiceGhostButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+  },
+  startChoiceGhostButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#5d7890',
+  },
   startOverlayBackdrop: {
     position: 'absolute',
     top: 0,
@@ -1345,14 +1490,24 @@ const styles = StyleSheet.create({
     color: '#173450',
   },
   modalCloseButton: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: '#dceefe',
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e4f1ff',
+    borderWidth: 1,
+    borderColor: '#cde2f7',
+    shadowColor: '#5b9de1',
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
   },
-  modalCloseText: {
-    fontSize: 11,
-    fontWeight: '700',
+  modalCloseIcon: {
+    fontSize: 16,
+    lineHeight: 16,
+    fontWeight: '900',
     color: '#2e5472',
   },
   handCardGuideIntro: {
@@ -1380,6 +1535,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     padding: 10,
   },
+  voucherGuideRow: {
+    backgroundColor: '#fff7e8',
+    borderStyle: 'dashed',
+  },
   handCardGuideThumbWrap: {
     width: 56,
     height: 72,
@@ -1387,6 +1546,25 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#bfdcf3',
+  },
+  voucherGuideThumbWrap: {
+    borderWidth: 2,
+    borderColor: '#f2b84b',
+  },
+  voucherGuideBadge: {
+    position: 'absolute',
+    top: 3,
+    right: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: 'rgba(66, 35, 3, 0.82)',
+  },
+  voucherGuideBadgeText: {
+    fontSize: 7,
+    fontWeight: '900',
+    color: '#fff5d8',
+    letterSpacing: 0.4,
   },
   handCardGuideThumb: {
     width: '100%',
@@ -1442,6 +1620,16 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#185cc4',
     backgroundColor: '#e7f1ff',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  voucherGuideTypeBadge: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#9a5a00',
+    backgroundColor: '#ffe5b3',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,

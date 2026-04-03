@@ -33,6 +33,14 @@ export type CardPlayResult =
       dice: DiceRoll;
       message: string;
       negativeJokerId?: string;
+      handSizeVoucherDelta?: number;
+      interestCapVoucherDelta?: number;
+      ignoreBossForCurrentAnte?: boolean;
+      goldCost?: number;
+      scoreBonusDelta?: number;
+      multiplierDelta?: number;
+      drawCards?: number;
+      scoreNote?: string;
     }
   | {
       ok: false;
@@ -45,6 +53,8 @@ export type ActionCardDefinition = {
   description: string;
   rarity: ActionCardRarity;
   tags: BuildTag[];
+  pool?: 'standard' | 'voucher';
+  consumable?: boolean;
   apply: (params: CardPlayParams) => CardPlayResult;
 };
 
@@ -54,13 +64,17 @@ export type CardPlayParams = {
   rollDiceAt: (dice: DiceRoll, indices: number[]) => DiceRoll;
   jokerIds: string[];
   negativeJokerIds: string[];
+  currentGold: number;
   rng: () => number;
 };
+
+export type JokerProgressMap = Record<string, number>;
 
 export type JokerEffectContext = {
   trigger: JokerTrigger;
   dice: DiceRoll;
   scoringDice: number[];
+  currentGold: number;
   handRank: HandRank;
   handBase: number;
   diceBase: number;
@@ -72,6 +86,15 @@ export type JokerEffectContext = {
   diceCountBonus: number;
   handRefreshes: number;
   goldDelta: number;
+  jokerProgress: JokerProgressMap;
+  cardsPlayedThisHand: number;
+  goldSpentThisHand: number;
+  cardsSoldThisStage: number;
+  rerollsUsedThisHand: number;
+  shopPurchasesThisVisit: number;
+  interestGoldLastSettlement: number;
+  currentStageTarget: number;
+  remainingHands: number;
   notes: string[];
 };
 
@@ -141,6 +164,7 @@ export type StageSettlementSummary = {
   spareHands: number;
   spareRolls: number;
   efficiencyGold: number;
+  interestGold: number;
   blindRewardGold: number;
   handScoreGold: number;
   goldBeforeHand: number;

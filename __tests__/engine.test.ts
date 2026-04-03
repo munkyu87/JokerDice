@@ -1,4 +1,4 @@
-import { evaluateHand, scoreDice } from '../src/game/engine';
+import { evaluateHand, getActionCard, scoreDice } from '../src/game/engine';
 
 describe('rogueroll engine', () => {
   test('detects a straight correctly', () => {
@@ -29,5 +29,63 @@ describe('rogueroll engine', () => {
     expect(result.activeJokerIds).toEqual(['triple_boost']);
     expect(result.disabledJokerIds).toEqual(['golden_touch']);
     expect(result.finalScore).toBe(328);
+  });
+
+  test('gold jokers use current gold for score and spending', () => {
+    const result = scoreDice({
+      dice: [6, 6, 2, 4, 4],
+      jokerIds: ['gold_rush', 'bribe', 'jackpot_engine'],
+      currentGold: 25,
+    });
+
+    expect(result.bonusBase).toBe(80);
+    expect(result.multiplier).toBe(2);
+    expect(result.goldDelta).toBe(-8);
+    expect(result.finalScore).toBe(244);
+  });
+
+  test('tax collector and pawn broker reflect stored economy state', () => {
+    const result = scoreDice({
+      dice: [3, 3, 3, 2, 2],
+      jokerIds: ['tax_collector', 'pawn_broker'],
+      interestGoldLastSettlement: 4,
+      cardsSoldThisStage: 2,
+    });
+
+    expect(result.handRank).toBe('full_house');
+    expect(result.bonusBase).toBe(68);
+    expect(result.finalScore).toBe(141);
+  });
+
+  test('gold cards fail without enough gold and succeed with cost', () => {
+    const goldBurn = getActionCard('gold_burn');
+    expect(goldBurn).toBeDefined();
+
+    const failed = goldBurn?.apply({
+      dice: [1, 2, 3, 4, 5],
+      selectedDice: [],
+      rollDiceAt: dice => dice,
+      jokerIds: [],
+      negativeJokerIds: [],
+      currentGold: 9,
+      rng: () => 0.25,
+    });
+    expect(failed).toEqual({ ok: false, message: 'Gold Burn은 10G가 필요합니다.' });
+
+    const success = goldBurn?.apply({
+      dice: [1, 2, 3, 4, 5],
+      selectedDice: [],
+      rollDiceAt: dice => dice,
+      jokerIds: [],
+      negativeJokerIds: [],
+      currentGold: 10,
+      rng: () => 0.25,
+    });
+
+    expect(success).toMatchObject({
+      ok: true,
+      goldCost: 10,
+      scoreBonusDelta: 120,
+    });
   });
 });
