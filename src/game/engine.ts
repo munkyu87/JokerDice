@@ -321,8 +321,26 @@ export const getJoker = (jokerId: string): JokerDefinition | undefined =>
 
 export const getBoss = (bossId?: string) => BOSSES.find(boss => boss.id === bossId);
 
+export const MAX_JOKER_SLOTS = 5;
+
+export const getEmptyJokerSlotCount = (
+  jokerIds: string[],
+  negativeJokerIds: string[],
+  maxSlots = MAX_JOKER_SLOTS,
+) => {
+  const negativesOnBoard = negativeJokerIds.filter(id => jokerIds.includes(id)).length;
+  const occupied = Math.max(0, jokerIds.length - negativesOnBoard);
+  return Math.max(0, maxSlots - occupied);
+};
+
+/** 보스 스테이지에서 Boss Shield 조커가 보스 핸디캡(슬롯 비활성·보스 점수 효과)을 무효화합니다. */
+export const isBossHandicapSuppressed = (jokerIds: string[], bossId?: string) =>
+  Boolean(bossId && jokerIds.includes('boss_shield'));
+
 export const getActiveJokerIds = (jokerIds: string[], bossId?: string) => {
-  const disabledSlots = getBoss(bossId)?.disabledJokerSlots ?? 0;
+  const disabledSlots = isBossHandicapSuppressed(jokerIds, bossId)
+    ? 0
+    : (getBoss(bossId)?.disabledJokerSlots ?? 0);
   const activeCount = Math.max(0, jokerIds.length - disabledSlots);
 
   return {
@@ -336,8 +354,11 @@ export const getHandStartBonus = (
   bossId?: string,
   jokerProgress: JokerProgressMap = {},
   currentGold = 0,
+  negativeJokerIds: string[] = [],
+  maxJokerSlots = MAX_JOKER_SLOTS,
 ) => {
   const { activeJokerIds } = getActiveJokerIds(jokerIds, bossId);
+  const emptyJokerSlots = getEmptyJokerSlotCount(jokerIds, negativeJokerIds, maxJokerSlots);
   let context: JokerEffectContext = {
     trigger: 'onHandStart',
     dice: [] as DiceRoll,
@@ -363,6 +384,7 @@ export const getHandStartBonus = (
     interestGoldLastSettlement: 0,
     currentStageTarget: 0,
     remainingHands: 0,
+    emptyJokerSlots,
     notes: [],
   };
 
@@ -425,6 +447,8 @@ export const scoreDice = ({
   handBonusBase = 0,
   handMultiplierBonus = 0,
   handNotes = [],
+  negativeJokerIds = [],
+  maxJokerSlots = MAX_JOKER_SLOTS,
 }: {
   dice: DiceRoll;
   jokerIds: string[];
@@ -442,15 +466,18 @@ export const scoreDice = ({
   handBonusBase?: number;
   handMultiplierBonus?: number;
   handNotes?: string[];
+  negativeJokerIds?: string[];
+  maxJokerSlots?: number;
 }): ScoreResult => {
   const boss = getBoss(bossId);
   let scoreContext = createBaseScoreContext(dice, handBonusBase, handMultiplierBonus, handNotes);
 
-  if (boss?.applyBeforeJokers) {
+  if (boss?.applyBeforeJokers && !isBossHandicapSuppressed(jokerIds, bossId)) {
     scoreContext = normalizeBossContext(boss.applyBeforeJokers(scoreContext));
   }
 
   const { activeJokerIds, disabledJokerIds } = getActiveJokerIds(jokerIds, bossId);
+  const emptyJokerSlots = getEmptyJokerSlotCount(jokerIds, negativeJokerIds, maxJokerSlots);
 
   let beforeScoreContext: JokerEffectContext = {
     trigger: 'beforeScore',
@@ -477,6 +504,7 @@ export const scoreDice = ({
     interestGoldLastSettlement,
     currentStageTarget,
     remainingHands,
+    emptyJokerSlots,
     notes: scoreContext.notes,
   };
 

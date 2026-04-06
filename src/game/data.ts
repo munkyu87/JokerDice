@@ -622,10 +622,23 @@ const MULTIPLIER_GROWTH_JOKER_IDS: readonly string[] = [
 export const isMultiplierGrowthJoker = (jokerId: string) =>
   MULTIPLIER_GROWTH_JOKER_IDS.includes(jokerId);
 
+/** 위탁·잡식형 배수 성장 조커: 스텝당 +0.2 (저장값이 예전 정수면 ×0.2로 마이그레이션) */
+export const ALLEY_MULTIPLIER_GROWTH_STEP = 0.2;
+
+const ALLEY_MULTIPLIER_GROWTH_JOKER_IDS: readonly string[] = ['consignment_cut', 'rake_neighbor'];
+
+export const isAlleyMultiplierGrowthJoker = (jokerId: string) =>
+  ALLEY_MULTIPLIER_GROWTH_JOKER_IDS.includes(jokerId);
+
 const roundMultiplierGrowthValue = (n: number) => Math.round(n * 10) / 10;
+
+const roundAlleyMultiplierValue = (n: number) => Math.round(n * 10) / 10;
 
 export const stepMultiplierGrowthProgress = (current: number, steps: number) =>
   roundMultiplierGrowthValue(current + steps * MULTIPLIER_GROWTH_STEP);
+
+export const stepAlleyMultiplierGrowthProgress = (current: number, steps: number) =>
+  roundAlleyMultiplierValue(current + steps * ALLEY_MULTIPLIER_GROWTH_STEP);
 
 export const formatMultiplierGrowthForDisplay = (n: number) =>
   roundMultiplierGrowthValue(n).toFixed(1);
@@ -646,6 +659,11 @@ const GROWTH_JOKER_BASE_VALUES: Partial<Record<string, number>> = {
   all_in: 12,
   glass_joker: MULTIPLIER_GROWTH_STEP,
   last_chance: 16,
+  consignment_cut: ALLEY_MULTIPLIER_GROWTH_STEP,
+  rake_neighbor: ALLEY_MULTIPLIER_GROWTH_STEP,
+  dealers_habit: 0,
+  lucky_six: 0,
+  lucky_one: 0,
 };
 
 export const getGrowthJokerValue = (jokerId: string, progress: JokerProgressMap = {}) => {
@@ -657,14 +675,35 @@ export const getGrowthJokerValue = (jokerId: string, progress: JokerProgressMap 
       raw = raw * MULTIPLIER_GROWTH_STEP;
     }
     raw = roundMultiplierGrowthValue(raw);
+    return raw;
+  }
+
+  if (isAlleyMultiplierGrowthJoker(jokerId)) {
+    if (Number.isFinite(raw) && Number.isInteger(raw) && raw >= 1) {
+      raw = raw * ALLEY_MULTIPLIER_GROWTH_STEP;
+    }
+    raw = roundAlleyMultiplierValue(raw);
   }
 
   return raw;
 };
 
+export const isGrowthJoker = (jokerId: string) => jokerId in GROWTH_JOKER_BASE_VALUES;
+
+export const getGrowthJokerBadgeText = (jokerId: string, progress: JokerProgressMap = {}) => {
+  if (!isGrowthJoker(jokerId)) {
+    return undefined;
+  }
+  const value = getGrowthJokerValue(jokerId, progress);
+  if (isMultiplierGrowthJoker(jokerId) || isAlleyMultiplierGrowthJoker(jokerId)) {
+    return `+${formatMultiplierGrowthForDisplay(value)}x`;
+  }
+  return `+${value}`;
+};
+
 export const getGrowthJokerSummary = (jokerId: string, progress: JokerProgressMap = {}) => {
   const value = getGrowthJokerValue(jokerId, progress);
-  if (!(jokerId in GROWTH_JOKER_BASE_VALUES)) {
+  if (!isGrowthJoker(jokerId)) {
     return undefined;
   }
 
@@ -684,6 +723,11 @@ export const getGrowthJokerSummary = (jokerId: string, progress: JokerProgressMa
     all_in: `현재 누적 기본 점수 +${value}`,
     glass_joker: `현재 누적 배수 +${formatMultiplierGrowthForDisplay(value)}`,
     last_chance: `현재 막판 Hand 보너스 +${value}`,
+    consignment_cut: `현재 누적 배수 +${formatMultiplierGrowthForDisplay(value)}`,
+    rake_neighbor: `현재 누적 배수 +${formatMultiplierGrowthForDisplay(value)}`,
+    dealers_habit: `현재 누적 기본 점수 +${value}`,
+    lucky_six: `현재 6 보너스 +${value}`,
+    lucky_one: `현재 1 보너스 +${value}`,
   };
 
   return byId[jokerId];
@@ -709,8 +753,13 @@ export const getGrowthJokerDetail = (jokerId: string, progress: JokerProgressMap
     golden_habit: '성장: 상점 구매 시 +0.1',
     frugal_mask: '성장: 상점 구매 없이 넘기면 +6',
     all_in: '성장: 목표보다 100점 초과할 때마다 +4',
-    glass_joker: '성장: Hand 점수 60 이상이면 +0.2, 실패 시 0.1로 초기화',
+    glass_joker: '성장: Hand 점수 60 이상이면 +0.2, 60 미만이면 0.1로 초기화',
     last_chance: '성장: 남은 Hand 1 이하로 클리어 시 +12',
+    consignment_cut: '성장: 자신이 아닌 조커를 판매할 때마다 +0.2',
+    rake_neighbor: '성장: 스테이지 시작 시 오른쪽 조커를 잡아먹을 때마다 +0.2',
+    dealers_habit: '성장: 상점 구매 시 기본 점수 +5',
+    lucky_six: '성장: 점수 주사위에 6이 2개 이상일 때 +3',
+    lucky_one: '성장: 점수 주사위에 1이 2개 이상일 때 +3',
   };
 
   return {
@@ -1005,7 +1054,7 @@ export const JOKERS: JokerDefinition[] = [
     id: 'glass_joker',
     name: 'Glass Joker',
     description:
-      '현재 누적 수치만큼 배수를 얻습니다. Hand 점수 60 이상이면 +0.2 성장하지만, 실패하면 0.1로 초기화됩니다.',
+      '현재 누적 수치만큼 배수를 얻습니다. Hand 점수 60 이상이면 +0.2 성장하고, 60 미만이면 0.1로 초기화됩니다.',
     rarity: 'legendary',
     tags: ['high'],
     trigger: 'beforeScore',
@@ -1445,6 +1494,305 @@ export const JOKERS: JokerDefinition[] = [
     tags: ['economy'],
     trigger: 'onHandStart',
     apply: ctx => ctx,
+  },
+  {
+    id: 'low_roller',
+    name: 'Low Roller',
+    description: '점수에 포함된 주사위가 모두 1~3이면 배수 +2.',
+    rarity: 'common',
+    tags: ['consistency'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      const dice = ctx.scoringDice;
+      if (dice.length === 0 || dice.some(v => v > 3)) {
+        return ctx;
+      }
+      return {
+        ...ctx,
+        multiplier: ctx.multiplier + 2,
+        notes: [...ctx.notes, 'Low Roller: 저점 배수 +2'],
+      };
+    },
+  },
+  {
+    id: 'high_stakes',
+    name: 'High Stakes',
+    description: '점수에 포함된 주사위가 모두 4~6이면 기본 점수 +25.',
+    rarity: 'uncommon',
+    tags: ['high'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      const dice = ctx.scoringDice;
+      if (dice.length === 0 || dice.some(v => v < 4)) {
+        return ctx;
+      }
+      return {
+        ...ctx,
+        bonusBase: ctx.bonusBase + 25,
+        notes: [...ctx.notes, 'High Stakes: 고점 기본 점수 +25'],
+      };
+    },
+  },
+  {
+    id: 'last_reroll',
+    name: 'Last Reroll',
+    description: '이번 Hand에서 리롤을 1회 이상 썼다면 배수 +2.',
+    rarity: 'common',
+    tags: ['consistency'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      if (ctx.rerollsUsedThisHand < 1) {
+        return ctx;
+      }
+      return {
+        ...ctx,
+        multiplier: ctx.multiplier + 2,
+        notes: [...ctx.notes, 'Last Reroll: 리롤 사용으로 배수 +2'],
+      };
+    },
+  },
+  {
+    id: 'cold_hand',
+    name: 'Cold Hand',
+    description: '이번 Hand에서 카드도 리롤도 쓰지 않고 제출하면 기본 점수 +14.',
+    rarity: 'uncommon',
+    tags: ['consistency'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      if (ctx.cardsPlayedThisHand > 0 || ctx.rerollsUsedThisHand > 0) {
+        return ctx;
+      }
+      return {
+        ...ctx,
+        bonusBase: ctx.bonusBase + 14,
+        notes: [...ctx.notes, 'Cold Hand: 클린 제출 기본 점수 +14'],
+      };
+    },
+  },
+  {
+    id: 'hot_hand',
+    name: 'Hot Hand',
+    description: '이번 Hand에서 핸드 카드를 2장 이상 썼다면 배수 +1.5.',
+    rarity: 'uncommon',
+    tags: ['consistency'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      if (ctx.cardsPlayedThisHand < 2) {
+        return ctx;
+      }
+      return {
+        ...ctx,
+        multiplier: ctx.multiplier + 1.5,
+        notes: [...ctx.notes, 'Hot Hand: 카드 2장+ 배수 +1.5'],
+      };
+    },
+  },
+  {
+    id: 'savings_account',
+    name: 'Savings Account',
+    description: '보유 골드 10당 배수 +0.5 (최대 +1.5, 30G 이상까지).',
+    rarity: 'uncommon',
+    tags: ['economy'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      const tiers = Math.min(3, Math.floor(ctx.currentGold / 10));
+      const add = tiers * 0.5;
+      if (add <= 0) {
+        return ctx;
+      }
+      return {
+        ...ctx,
+        multiplier: ctx.multiplier + add,
+        notes: [...ctx.notes, `Savings Account: 골드 구간으로 배수 +${add}`],
+      };
+    },
+  },
+  {
+    id: 'debt_engine',
+    name: 'Debt Engine',
+    description: '보유 골드가 5 이하이면 배수 +2.',
+    rarity: 'rare',
+    tags: ['economy', 'high'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      if (ctx.currentGold > 5) {
+        return ctx;
+      }
+      return {
+        ...ctx,
+        multiplier: ctx.multiplier + 2,
+        notes: [...ctx.notes, 'Debt Engine: 저골드 배수 +2'],
+      };
+    },
+  },
+  {
+    id: 'reserve_slot',
+    name: 'Reserve Slot',
+    description: '빈 조커 슬롯마다 Hand 시작 시 무료 리롤 +1.',
+    rarity: 'common',
+    tags: ['consistency', 'economy'],
+    trigger: 'onHandStart',
+    apply: ctx => {
+      const n = ctx.emptyJokerSlots;
+      if (n <= 0) {
+        return ctx;
+      }
+      return {
+        ...ctx,
+        extraRerolls: ctx.extraRerolls + n,
+        notes: [...ctx.notes, `Reserve Slot: 빈 슬롯 ${n}개로 무료 리롤 +${n}`],
+      };
+    },
+  },
+  {
+    id: 'final_bet',
+    name: 'Final Bet',
+    description: '남은 Hand가 1 이하일 때 배수 +4.',
+    rarity: 'rare',
+    tags: ['high', 'consistency'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      if (ctx.remainingHands > 1) {
+        return ctx;
+      }
+      return {
+        ...ctx,
+        multiplier: ctx.multiplier + 4,
+        notes: [...ctx.notes, 'Final Bet: 막판 배수 +4'],
+      };
+    },
+  },
+  {
+    id: 'all_or_nothing',
+    name: 'All or Nothing',
+    description: '점수 주사위에 1과 6이 동시에 있으면 배수 +3.',
+    rarity: 'rare',
+    tags: ['high'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      const d = ctx.scoringDice;
+      if (!d.includes(1) || !d.includes(6)) {
+        return ctx;
+      }
+      return {
+        ...ctx,
+        multiplier: ctx.multiplier + 3,
+        notes: [...ctx.notes, 'All or Nothing: 1·6 동시 포함 배수 +3'],
+      };
+    },
+  },
+  {
+    id: 'dealers_habit',
+    name: "Dealer's Habit",
+    description:
+      '현재 누적 수치만큼 기본 점수를 얻고, 상점에서 구매할 때마다 누적 기본 점수가 +5 성장합니다.',
+    rarity: 'rare',
+    tags: ['economy'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      const bonus = getGrowthJokerValue('dealers_habit', ctx.jokerProgress);
+      return {
+        ...ctx,
+        bonusBase: ctx.bonusBase + bonus,
+        notes: [...ctx.notes, `Dealer's Habit: 누적 기본 점수 +${bonus}`],
+      };
+    },
+  },
+  {
+    id: 'lucky_six',
+    name: 'Lucky Six',
+    description:
+      '현재 누적 수치만큼 기본 점수를 얻고, 점수 주사위에 6이 2개 이상이면 누적이 +3 성장합니다.',
+    rarity: 'uncommon',
+    tags: ['high'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      const bonus = getGrowthJokerValue('lucky_six', ctx.jokerProgress);
+      return {
+        ...ctx,
+        bonusBase: ctx.bonusBase + bonus,
+        notes: [...ctx.notes, `Lucky Six: 누적 기본 점수 +${bonus}`],
+      };
+    },
+  },
+  {
+    id: 'lucky_one',
+    name: 'Lucky One',
+    description:
+      '현재 누적 수치만큼 기본 점수를 얻고, 점수 주사위에 1이 2개 이상이면 누적이 +3 성장합니다.',
+    rarity: 'uncommon',
+    tags: ['consistency'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      const bonus = getGrowthJokerValue('lucky_one', ctx.jokerProgress);
+      return {
+        ...ctx,
+        bonusBase: ctx.bonusBase + bonus,
+        notes: [...ctx.notes, `Lucky One: 누적 기본 점수 +${bonus}`],
+      };
+    },
+  },
+  {
+    id: 'consignment_cut',
+    name: 'Consignment Cut',
+    description:
+      '현재 누적 배수를 얻습니다. 자신이 아닌 다른 조커를 판매할 때마다 누적 배수가 +0.2 성장합니다.',
+    rarity: 'rare',
+    tags: ['economy'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      const bonus = getGrowthJokerValue('consignment_cut', ctx.jokerProgress);
+      return {
+        ...ctx,
+        multiplier: ctx.multiplier + bonus,
+        notes: [...ctx.notes, `Consignment Cut: 누적 배수 +${formatMultiplierGrowthForDisplay(bonus)}`],
+      };
+    },
+  },
+  {
+    id: 'slot_echo',
+    name: 'Slot Echo',
+    description: '빈 조커 슬롯마다 배수 +0.5. 슬롯이 가득 차면 이 효과는 +0입니다.',
+    rarity: 'uncommon',
+    tags: ['economy'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      const add = ctx.emptyJokerSlots * 0.5;
+      if (add <= 0) {
+        return ctx;
+      }
+      return {
+        ...ctx,
+        multiplier: ctx.multiplier + add,
+        notes: [...ctx.notes, `Slot Echo: 빈 슬롯으로 배수 +${add}`],
+      };
+    },
+  },
+  {
+    id: 'boss_shield',
+    name: 'Boss Shield',
+    description: '보스 스테이지에서 보스 핸디캡(슬롯 비활성·보스 점수 효과)을 무효화합니다.',
+    rarity: 'legendary',
+    tags: ['consistency', 'high'],
+    trigger: 'beforeScore',
+    apply: ctx => ctx,
+  },
+  {
+    id: 'rake_neighbor',
+    name: 'Rake Neighbor',
+    description:
+      '현재 누적 배수를 얻습니다. 매 스테이지 시작 시 바로 오른쪽 조커를 제거하고, 그때마다 누적 배수가 +0.2 성장합니다.',
+    rarity: 'legendary',
+    tags: ['high'],
+    trigger: 'beforeScore',
+    apply: ctx => {
+      const bonus = getGrowthJokerValue('rake_neighbor', ctx.jokerProgress);
+      return {
+        ...ctx,
+        multiplier: ctx.multiplier + bonus,
+        notes: [...ctx.notes, `Rake Neighbor: 누적 배수 +${formatMultiplierGrowthForDisplay(bonus)}`],
+      };
+    },
   },
   {
     id: 'sixth_sense',

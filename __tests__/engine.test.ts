@@ -31,6 +31,35 @@ describe('rogueroll engine', () => {
     expect(result.finalScore).toBe(328);
   });
 
+  test('boss shield nullifies boss handicap on boss stage', () => {
+    const withShield = scoreDice({
+      dice: [6, 6, 6, 2, 2],
+      jokerIds: ['triple_boost', 'golden_touch', 'boss_shield'],
+      bossId: 'static_sleeve',
+    });
+    expect(withShield.activeJokerIds).toEqual(['triple_boost', 'golden_touch', 'boss_shield']);
+    expect(withShield.disabledJokerIds).toEqual([]);
+    const noShieldSameDice = scoreDice({
+      dice: [6, 6, 6, 2, 2],
+      jokerIds: ['triple_boost', 'golden_touch'],
+      bossId: 'static_sleeve',
+    });
+    expect(withShield.finalScore).toBe(noShieldSameDice.finalScore);
+
+    const ceilingOnly = scoreDice({
+      dice: [5, 5, 5, 2, 2],
+      jokerIds: ['boss_shield'],
+      bossId: 'ceiling_jam',
+    });
+    expect(ceilingOnly.scoringDice.filter(v => v === 5).length).toBe(3);
+    const ceilingNoShield = scoreDice({
+      dice: [5, 5, 5, 2, 2],
+      jokerIds: [],
+      bossId: 'ceiling_jam',
+    });
+    expect(ceilingOnly.diceBase).toBeGreaterThan(ceilingNoShield.diceBase);
+  });
+
   test('gold jokers use current gold for score and spending', () => {
     const result = scoreDice({
       dice: [6, 6, 2, 4, 4],

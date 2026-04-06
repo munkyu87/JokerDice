@@ -95,6 +95,8 @@ export type JokerEffectContext = {
   interestGoldLastSettlement: number;
   currentStageTarget: number;
   remainingHands: number;
+  /** 비어 있는 조커 슬롯 수 (MAX 슬롯 − 실제 점유, 네거티브 조커는 슬롯 미점유로 계산) */
+  emptyJokerSlots: number;
   notes: string[];
 };
 

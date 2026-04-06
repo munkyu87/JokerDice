@@ -5,6 +5,7 @@ import {
   MULTIPLIER_GROWTH_STEP,
   STAGES,
   getGrowthJokerValue,
+  stepAlleyMultiplierGrowthProgress,
   stepMultiplierGrowthProgress,
 } from './data';
 import {
@@ -19,6 +20,7 @@ import {
   getHandStartBonus,
   getPurgeableCards,
   getJoker,
+  MAX_JOKER_SLOTS,
   getSellPriceHandCard,
   getSellPriceJoker,
   movePlayedCardToDiscard,
@@ -40,7 +42,7 @@ import {
   StageSettlementSummary,
 } from './types';
 
-const MAX_JOKERS = 5;
+const MAX_JOKERS = MAX_JOKER_SLOTS;
 const BASE_HAND_DRAW = 3;
 const BASE_DICE_COUNT = 5;
 const INTEREST_GOLD_STEP = 5;
@@ -232,6 +234,12 @@ const applyEndOfHandGrowth = ({
   ) {
     nextProgress = updateJokerProgressValue(nextProgress, 'last_chance', current => current + 12);
   }
+  if (activeJokerIds.has('lucky_six') && scoring.scoringDice.filter(v => v === 6).length >= 2) {
+    nextProgress = updateJokerProgressValue(nextProgress, 'lucky_six', current => current + 3);
+  }
+  if (activeJokerIds.has('lucky_one') && scoring.scoringDice.filter(v => v === 1).length >= 2) {
+    nextProgress = updateJokerProgressValue(nextProgress, 'lucky_one', current => current + 3);
+  }
 
   return nextProgress;
 };
@@ -251,13 +259,16 @@ const applyShopPurchaseGrowth = (currentState: GameState) => {
   const activeJokerIds = new Set(
     getActiveJokerIds(currentState.jokers, getEffectiveBossId(currentState)).activeJokerIds,
   );
-  if (!activeJokerIds.has('golden_habit')) {
-    return currentState.jokerProgress;
+  let next = currentState.jokerProgress;
+  if (activeJokerIds.has('golden_habit')) {
+    next = updateJokerProgressValue(next, 'golden_habit', current =>
+      stepMultiplierGrowthProgress(current, 1),
+    );
   }
-
-  return updateJokerProgressValue(currentState.jokerProgress, 'golden_habit', current =>
-    stepMultiplierGrowthProgress(current, 1),
-  );
+  if (activeJokerIds.has('dealers_habit')) {
+    next = updateJokerProgressValue(next, 'dealers_habit', current => current + 5);
+  }
+  return next;
 };
 
 const applySkipShopGrowth = (currentState: GameState) => {
@@ -271,6 +282,47 @@ const applySkipShopGrowth = (currentState: GameState) => {
   return updateJokerProgressValue(currentState.jokerProgress, 'frugal_mask', current => current + 6);
 };
 
+const RAKE_NEIGHBOR_ID = 'rake_neighbor';
+
+const applyRakeNeighborAtStageStart = (
+  jokers: string[],
+  jokerProgress: JokerProgressMap,
+  negativeJokerIds: string[],
+): {
+  jokers: string[];
+  jokerProgress: JokerProgressMap;
+  negativeJokerIds: string[];
+  messages: string[];
+} => {
+  let next = [...jokers];
+  let nextProgress = { ...jokerProgress };
+  let nextNeg = [...negativeJokerIds];
+  const messages: string[] = [];
+
+  for (let i = next.length - 1; i >= 0; i -= 1) {
+    if (next[i] !== RAKE_NEIGHBOR_ID) {
+      continue;
+    }
+    if (i + 1 >= next.length) {
+      continue;
+    }
+    const eatenId = next[i + 1];
+    if (!eatenId) {
+      continue;
+    }
+    next.splice(i + 1, 1);
+    const { [eatenId]: _removed, ...rest } = nextProgress;
+    nextProgress = rest;
+    nextNeg = nextNeg.filter(id => id !== eatenId);
+    const eatenName = getJoker(eatenId)?.name ?? '조커';
+    messages.push(`Rake Neighbor가 ${eatenName}를 잡아먹어 배수 +0.2 성장했습니다.`);
+    nextProgress = updateJokerProgressValue(nextProgress, RAKE_NEIGHBOR_ID, current =>
+      stepAlleyMultiplierGrowthProgress(current, 1),
+    );
+  }
+
+  return { jokers: next, jokerProgress: nextProgress, negativeJokerIds: nextNeg, messages };
+};
 
 const getStageDefinitionForProgress = (ante: number, stageIndex: number) => {
   const baseStage = STAGES[stageIndex];
@@ -303,6 +355,7 @@ const beginHand = ({
   permanentHandSizeVoucherBonus,
   jokerProgress,
   currentGold,
+  negativeJokerIds = [],
   rng,
 }: {
   deck: DeckState;
@@ -311,10 +364,18 @@ const beginHand = ({
   permanentHandSizeVoucherBonus: number;
   jokerProgress: JokerProgressMap;
   currentGold: number;
+  negativeJokerIds?: string[];
   rng: () => number;
 }) => {
   const resetDeck = discardHand(deck);
-  const handStartBonus = getHandStartBonus(jokers, bossId, jokerProgress, currentGold);
+  const handStartBonus = getHandStartBonus(
+    jokers,
+    bossId,
+    jokerProgress,
+    currentGold,
+    negativeJokerIds,
+    MAX_JOKERS,
+  );
   const drawCount = BASE_HAND_DRAW + permanentHandSizeVoucherBonus + handStartBonus.handSizeBonus;
   const preparedDeck = drawCards(resetDeck, drawCount, rng);
   const diceCount = BASE_DICE_COUNT + handStartBonus.diceCountBonus;
@@ -345,7 +406,10 @@ const createInitialGameState = (
   startingJokerId: string = 'lucky_reroll',
   rng: () => number = Math.random,
 ): GameState => {
-  const startingJokers = [startingJokerId];
+  const rake = applyRakeNeighborAtStageStart([startingJokerId], {}, []);
+  const startingJokers = rake.jokers;
+  const startingProgress = rake.jokerProgress;
+  const startingNegative = rake.negativeJokerIds;
   const bossId = getBossIdForStage(0, rng);
   const startingDeck = createStartingDeck(rng);
   const opening = beginHand({
@@ -353,16 +417,20 @@ const createInitialGameState = (
     jokers: startingJokers,
     bossId,
     permanentHandSizeVoucherBonus: 0,
-    jokerProgress: {},
+    jokerProgress: startingProgress,
     currentGold: STARTING_GOLD,
+    negativeJokerIds: startingNegative,
     rng,
   });
+
+  const openMessage =
+    rake.messages.length > 0 ? `${rake.messages.join(' ')} ${opening.message}` : opening.message;
 
   return {
     phase: 'playing',
     deck: opening.deck,
     jokers: [...startingJokers],
-    negativeJokerIds: [],
+    negativeJokerIds: startingNegative,
     permanentHandSizeVoucherBonus: 0,
     interestCapVoucherBonus: 0,
     ignoredBossAnte: undefined,
@@ -377,13 +445,13 @@ const createInitialGameState = (
     hand: opening.hand,
     rewardOptions: [],
     shopItems: [],
-    jokerProgress: {},
+    jokerProgress: startingProgress,
     shopRerollCount: 0,
     shopPurchasesThisVisit: 0,
     cardsSoldThisStage: 0,
     interestGoldLastSettlement: 0,
     gold: STARTING_GOLD + opening.goldDelta,
-    message: opening.message,
+    message: openMessage,
   };
 };
 
@@ -427,6 +495,8 @@ export const useRogueRollGame = (
         handBonusBase: state.hand.scoreBonusFromCards,
         handMultiplierBonus: state.hand.multiplierBonusFromCards,
         handNotes: state.hand.scoreNotes,
+        negativeJokerIds: state.negativeJokerIds,
+        maxJokerSlots: MAX_JOKERS,
       }),
     [
       stageDefinition.targetScore,
@@ -442,6 +512,7 @@ export const useRogueRollGame = (
       state.interestGoldLastSettlement,
       state.jokerProgress,
       state.jokers,
+      state.negativeJokerIds,
       state.shopPurchasesThisVisit,
       effectiveBossId,
       state.stage.remainingHands,
@@ -682,20 +753,30 @@ export const useRogueRollGame = (
         ? undefined
         : bossId;
     const nextStageDefinition = getStageDefinitionForProgress(nextAnte, nextStageIndex);
+    const rake = applyRakeNeighborAtStageStart(
+      currentState.jokers,
+      currentState.jokerProgress,
+      currentState.negativeJokerIds,
+    );
     const opening = beginHand({
       deck: currentState.deck,
-      jokers: currentState.jokers,
+      jokers: rake.jokers,
       bossId: effectiveNextBossId,
       permanentHandSizeVoucherBonus: currentState.permanentHandSizeVoucherBonus,
-      jokerProgress: currentState.jokerProgress,
+      jokerProgress: rake.jokerProgress,
       currentGold: currentState.gold,
+      negativeJokerIds: rake.negativeJokerIds,
       rng: Math.random,
     });
+    const rakeNote = rake.messages.length > 0 ? ` ${rake.messages.join(' ')}` : '';
 
     return {
       ...currentState,
       phase: 'playing',
       deck: opening.deck,
+      jokers: rake.jokers,
+      negativeJokerIds: rake.negativeJokerIds,
+      jokerProgress: rake.jokerProgress,
       ignoredBossAnte: isLastStageInAnte ? undefined : currentState.ignoredBossAnte,
       shopReplaceItemId: undefined,
       stage: {
@@ -715,7 +796,7 @@ export const useRogueRollGame = (
       purgeSource: undefined,
       interestGoldLastSettlement: currentState.interestGoldLastSettlement,
       gold: currentState.gold + opening.goldDelta,
-      message: `Ante ${nextAnte} ${nextStageDefinition.name} 시작. ${opening.message}`,
+      message: `Ante ${nextAnte} ${nextStageDefinition.name} 시작.${rakeNote} ${opening.message}`,
       lastScore: currentState.lastScore,
     };
   };
@@ -747,6 +828,8 @@ export const useRogueRollGame = (
         handBonusBase: currentState.hand.scoreBonusFromCards,
         handMultiplierBonus: currentState.hand.multiplierBonusFromCards,
         handNotes: currentState.hand.scoreNotes,
+        negativeJokerIds: currentState.negativeJokerIds,
+        maxJokerSlots: MAX_JOKERS,
       });
 
       const nextScore = currentState.stage.currentScore + scoring.finalScore;
@@ -867,6 +950,8 @@ export const useRogueRollGame = (
         getEffectiveBossId(currentState),
         nextJokerProgress,
         currentState.gold,
+        currentState.negativeJokerIds,
+        MAX_JOKERS,
       );
       const drawCount = BASE_HAND_DRAW + handStartBonus.handSizeBonus;
       const diceCount = BASE_DICE_COUNT + handStartBonus.diceCountBonus;
@@ -1359,11 +1444,17 @@ export const useRogueRollGame = (
       const nextJokers = [...currentState.jokers];
       nextJokers.splice(slotIndex, 1);
       const { [jokerId]: _removedProgress, ...nextJokerProgress } = currentState.jokerProgress;
+      let progressAfterSell = nextJokerProgress;
+      if (jokerId !== 'consignment_cut' && nextJokers.includes('consignment_cut')) {
+        progressAfterSell = updateJokerProgressValue(progressAfterSell, 'consignment_cut', current =>
+          stepAlleyMultiplierGrowthProgress(current, 1),
+        );
+      }
 
       return {
         ...currentState,
         jokers: nextJokers,
-        jokerProgress: nextJokerProgress,
+        jokerProgress: progressAfterSell,
         negativeJokerIds: currentState.negativeJokerIds.filter(id => id !== jokerId),
         gold: currentState.gold + price + pawnBrokerBonus,
         cardsSoldThisStage: currentState.cardsSoldThisStage + 1,

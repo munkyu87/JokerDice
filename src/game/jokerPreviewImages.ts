@@ -39,6 +39,23 @@ const JOKER_PREVIEW_IMAGES: Record<string, ImageSourcePropType> = {
   shop_6_slot: require('../assets/jokers/joker-market-expansion-character.png'),
   gap_draw: require('../assets/jokers/joker-gap-fill-character.png'),
   sixth_sense: require('../assets/jokers/joker-sixth-sense-character.png'),
+  low_roller: require('../assets/jokers/joker-low-roller-character.png'),
+  high_stakes: require('../assets/jokers/joker-high-stakes-character.png'),
+  last_reroll: require('../assets/jokers/joker-last-reroll-character.png'),
+  cold_hand: require('../assets/jokers/joker-cold-hand-character.png'),
+  hot_hand: require('../assets/jokers/joker-hot-hand-character.png'),
+  savings_account: require('../assets/jokers/joker-savings-account-character.png'),
+  debt_engine: require('../assets/jokers/joker-debt-engine-character.png'),
+  reserve_slot: require('../assets/jokers/joker-reserve-slot-character.png'),
+  final_bet: require('../assets/jokers/joker-final-bet-character.png'),
+  all_or_nothing: require('../assets/jokers/joker-all-or-nothing-character.png'),
+  dealers_habit: require('../assets/jokers/joker-dealers-habit-character.png'),
+  lucky_six: require('../assets/jokers/joker-lucky-six-character.png'),
+  lucky_one: require('../assets/jokers/joker-lucky-one-character.png'),
+  consignment_cut: require('../assets/jokers/joker-consignment-cut-character.png'),
+  slot_echo: require('../assets/jokers/joker-slot-echo-character.png'),
+  boss_shield: require('../assets/jokers/joker-boss-shield-character.png'),
+  rake_neighbor: require('../assets/jokers/joker-rake-neighbor-character.png'),
 };
 
 export const getJokerPreviewImage = (jokerId: string): ImageSourcePropType | undefined =>

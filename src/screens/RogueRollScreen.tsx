@@ -31,6 +31,7 @@ import {
 import { getActionCardPreviewImage } from '../game/actionCardPreviewImages';
 import {
   JOKERS,
+  getGrowthJokerBadgeText,
   getGrowthJokerDetail,
   getStartingRouletteJokerPool,
   pickStartingRouletteJoker,
@@ -167,6 +168,18 @@ const JOKER_RARITY_COLORS: Record<JokerRarity, { frame: string; glow: string }> 
   legendary: { frame: '#f59e0b', glow: 'rgba(245, 158, 11, 0.45)' },
 };
 
+const formatMultiplierValue = (n: number) => {
+  const rounded = Math.round(n * 10) / 10;
+  return rounded.toFixed(1);
+};
+
+const JOKER_GROWTH_BADGE_COLORS: Record<JokerRarity, { background: string; border: string; text: string }> = {
+  common: { background: 'rgba(71, 85, 105, 0.92)', border: 'rgba(203, 213, 225, 0.92)', text: '#f8fafc' },
+  uncommon: { background: 'rgba(30, 64, 175, 0.92)', border: 'rgba(147, 197, 253, 0.92)', text: '#eff6ff' },
+  rare: { background: 'rgba(153, 27, 27, 0.92)', border: 'rgba(252, 165, 165, 0.92)', text: '#fef2f2' },
+  legendary: { background: 'rgba(146, 64, 14, 0.94)', border: 'rgba(253, 224, 71, 0.96)', text: '#fffbeb' },
+};
+
 const DIE_PIP_MAP: Record<DiceValue, boolean[]> = {
   1: [false, false, false, false, true, false, false, false, false],
   2: [true, false, false, false, false, false, false, false, true],
@@ -233,14 +246,14 @@ const PhaseCard = ({
 }: {
   title: string;
   description: string;
-  actionLabel: string;
+  actionLabel?: string;
   onPress: () => void;
 }) => (
   <View style={styles.overlayCard}>
     <Text style={styles.overlayTitle}>{title}</Text>
     <Text style={styles.overlayDescription}>{description}</Text>
     <Pressable onPress={onPress} style={styles.primaryButton}>
-      <Text style={styles.primaryButtonText}>{actionLabel}</Text>
+      <Text style={styles.primaryButtonText}>{actionLabel?.trim() || '다시하기'}</Text>
     </Pressable>
   </View>
 );
@@ -505,6 +518,7 @@ export function RogueRollScreen({
   const [showDeckList, setShowDeckList] = useState(false);
   const [selectedDeckListCardKey, setSelectedDeckListCardKey] = useState<string | null>(null);
   const [cardRowWidth, setCardRowWidth] = useState(0);
+  const [jokerRowWidth, setJokerRowWidth] = useState(0);
   const [selectedCardIndex, setSelectedCardIndex] = useState<number | null>(null);
   const [selectedJokerIndex, setSelectedJokerIndex] = useState<number | null>(null);
   const [selectedRewardId, setSelectedRewardId] = useState<string | null>(null);
@@ -815,25 +829,38 @@ export function RogueRollScreen({
       left,
     };
   }, [cardRowWidth, isCompact, selectedCardIndex, visibleCardSlotCount]);
-  const selectedJokerTooltipStyle = useMemo(() => {
+  const selectedJokerTooltipLayout = useMemo(() => {
     if (selectedJokerIndex === null || renderedJokerCount === 0) {
       return undefined;
     }
 
-    const tooltipWidthPercent = Math.min(58, Math.max(34, Math.round(180 / renderedJokerCount)));
-    const slotWidthPercent = 100 / renderedJokerCount;
-    const slotCenterPercent = slotWidthPercent * (selectedJokerIndex + 0.5);
-    const maxLeftPercent = 100 - tooltipWidthPercent;
-    const leftPercent = Math.min(
-      maxLeftPercent,
-      Math.max(0, slotCenterPercent - tooltipWidthPercent / 2),
+    const jokerWidth = isCompact ? 56 : 62;
+    const gap = isCompact ? 6 : 8;
+    const estimatedRowWidth =
+      jokerRowWidth > 0
+        ? jokerRowWidth
+        : jokerWidth * renderedJokerCount + gap * Math.max(0, renderedJokerCount - 1);
+    const maxTooltipWidth = Math.max(164, estimatedRowWidth - 8);
+    const tooltipWidth = Math.min(252, maxTooltipWidth);
+    const slotCenter = selectedJokerIndex * (jokerWidth + gap) + jokerWidth / 2;
+    const maxLeft = Math.max(0, estimatedRowWidth - tooltipWidth);
+    const left = Math.min(maxLeft, Math.max(0, slotCenter - tooltipWidth / 2));
+    const arrowLeft = Math.min(
+      tooltipWidth - 14,
+      Math.max(14, slotCenter - left),
     );
 
     return {
-      width: `${tooltipWidthPercent}%` as const,
-      left: `${leftPercent}%` as const,
+      tooltipStyle: {
+        width: tooltipWidth,
+        left,
+      },
+      arrowStyle: {
+        left: arrowLeft - 8,
+        marginLeft: 0,
+      },
     };
-  }, [renderedJokerCount, selectedJokerIndex]);
+  }, [isCompact, jokerRowWidth, renderedJokerCount, selectedJokerIndex]);
   const deckListCards = useMemo(
     () => [
       ...state.deck.hand.map((cardId, index) => ({
@@ -1697,7 +1724,7 @@ export function RogueRollScreen({
                 style={[
                   styles.jokerTooltip,
                   styles.jokerTooltipFloating,
-                  selectedJokerTooltipStyle,
+                  selectedJokerTooltipLayout?.tooltipStyle,
                   {
                     opacity: jokerTooltipAnimation,
                     transform: [
@@ -1710,8 +1737,8 @@ export function RogueRollScreen({
                     ],
                   },
                 ]}>
-                <Text style={styles.cardTooltipTitle}>{selectedJoker.name}</Text>
-                <Text style={styles.cardTooltipBody}>{selectedJoker.description}</Text>
+                <Text style={styles.jokerTooltipTitle}>{selectedJoker.name}</Text>
+                <Text style={styles.jokerTooltipBody}>{selectedJoker.description}</Text>
                 {selectedJokerGrowthDetail ? (
                   <View style={styles.jokerGrowthCard}>
                     <Text style={styles.jokerGrowthCurrent}>{selectedJokerGrowthDetail.current}</Text>
@@ -1723,11 +1750,13 @@ export function RogueRollScreen({
                   {negativeJokerIds.includes(selectedJoker.id) ? ' · 네거티브' : ''}
                   {activeJokers.disabledJokerIds.includes(selectedJoker.id) ? ' · 현재 비활성' : ''}
                 </Text>
-                <View style={styles.jokerTooltipArrow} />
+                <View style={[styles.jokerTooltipArrow, selectedJokerTooltipLayout?.arrowStyle]} />
               </Animated.View>
             ) : null}
 
-            <View style={[styles.jokerRow, isCompact ? styles.jokerRowCompact : undefined]}>
+            <View
+              style={[styles.jokerRow, isCompact ? styles.jokerRowCompact : undefined]}
+              onLayout={event => setJokerRowWidth(event.nativeEvent.layout.width)}>
             {state.jokers.map((jokerId, slotIndex) => {
               const joker = getJoker(jokerId);
               if (!joker) {
@@ -1740,6 +1769,8 @@ export function RogueRollScreen({
               const rarityTheme = joker ? JOKER_RARITY_COLORS[joker.rarity] : undefined;
               const badgeLabel = TAG_LABELS[getPrimaryTag(joker.tags)];
               const jokerPreviewImage = joker ? getJokerPreviewImage(joker.id) : undefined;
+              const growthBadgeText = getGrowthJokerBadgeText(joker.id, state.jokerProgress);
+              const growthBadgeColors = JOKER_GROWTH_BADGE_COLORS[joker.rarity];
               const animation = jokerSelectAnimationsRef.current[slotIndex];
               const jokerDragAnimation = jokerDragAnimationsRef.current[slotIndex];
               const isJokerDragging = draggingJokerIndex === slotIndex;
@@ -1841,6 +1872,20 @@ export function RogueRollScreen({
                             <Text style={styles.negativeJokerBadgeText}>NEG</Text>
                           </View>
                         ) : null}
+                        {growthBadgeText ? (
+                          <View
+                            style={[
+                              styles.growthJokerBadge,
+                              {
+                                backgroundColor: growthBadgeColors.background,
+                                borderColor: growthBadgeColors.border,
+                              },
+                            ]}>
+                            <Text style={[styles.growthJokerBadgeText, { color: growthBadgeColors.text }]}>
+                              {growthBadgeText}
+                            </Text>
+                          </View>
+                        ) : null}
                       </>
                     ) : (
                       <View style={styles.emptyJokerSlot} />
@@ -1860,7 +1905,8 @@ export function RogueRollScreen({
           <View style={styles.boardHeader}>
             <Text style={styles.boardTitle}>DICE BOARD</Text>
             <Text style={styles.boardFormula}>
-              ({previewScore.handBase}+{previewScore.diceBase}+{previewScore.bonusBase}) x {previewScore.multiplier}
+              ({previewScore.handBase}+{previewScore.diceBase}+{previewScore.bonusBase}) x{' '}
+              {formatMultiplierValue(previewScore.multiplier)}
             </Text>
           </View>
 
@@ -3056,7 +3102,7 @@ export function RogueRollScreen({
             <PhaseCard
               title="Run Failed"
               description="이번 빌드는 목표 점수에 도달하지 못했습니다. 조커 순서와 덱 압축을 다시 시험해보세요."
-              actionLabel="다시 도전"
+              actionLabel="다시하기"
               onPress={handleRetryRun}
             />
           ) : null}
@@ -3648,6 +3694,23 @@ const styles = StyleSheet.create({
     color: '#f8fafc',
     letterSpacing: 0.4,
   },
+  growthJokerBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    backgroundColor: 'rgba(12, 74, 110, 0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(186, 230, 253, 0.8)',
+  },
+  growthJokerBadgeText: {
+    fontSize: 8,
+    fontWeight: '900',
+    color: '#ecfeff',
+    letterSpacing: 0.2,
+  },
   boardPanel: {
     flex: 1.02,
     backgroundColor: '#f3d2d0',
@@ -3896,56 +3959,69 @@ const styles = StyleSheet.create({
     zIndex: 5,
   },
   jokerTooltip: {
-    borderRadius: 14,
+    borderRadius: 16,
     backgroundColor: '#ffffff',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#bfdcf3',
-    shadowColor: '#6b8aa5',
-    shadowOpacity: 0.16,
-    shadowRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1.5,
+    borderColor: '#aecfe9',
+    shadowColor: '#466989',
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
     shadowOffset: {
       width: 0,
-      height: 4,
+      height: 6,
     },
-    elevation: 4,
+    elevation: 5,
   },
   jokerTooltipFloating: {
     position: 'absolute',
     bottom: '100%',
-    marginBottom: 10,
+    marginBottom: 12,
     zIndex: 5,
   },
+  jokerTooltipTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#153752',
+  },
+  jokerTooltipBody: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#3b5f7f',
+    fontWeight: '600',
+  },
   jokerTooltipMeta: {
-    marginTop: 6,
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#4e79a0',
+    marginTop: 8,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#3f678c',
   },
   jokerGrowthCard: {
-    marginTop: 6,
-    borderRadius: 10,
+    marginTop: 8,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#cfe1f2',
-    backgroundColor: '#eef6ff',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 3,
+    borderColor: '#bdd6ee',
+    backgroundColor: '#edf5ff',
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    gap: 4,
   },
   jokerGrowthCurrent: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
     color: '#185cc4',
   },
   jokerGrowthRule: {
-    fontSize: 11,
-    lineHeight: 15,
-    color: '#4e6f8d',
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#496a87',
+    fontWeight: '600',
   },
   jokerTooltipArrow: {
     position: 'absolute',
-    bottom: -8,
+    bottom: -9,
     left: '50%',
     marginLeft: -8,
     width: 16,
@@ -4888,8 +4964,10 @@ const styles = StyleSheet.create({
   overlayCard: {
     backgroundColor: '#ebf1f8',
     borderRadius: 18,
-    padding: 14,
-    gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 18,
+    gap: 12,
   },
   overlayTitle: {
     fontSize: 18,
@@ -4921,13 +4999,17 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 14,
     paddingHorizontal: 16,
+    marginTop: 2,
+    minHeight: 52,
     alignItems: 'center',
+    justifyContent: 'center',
     flex: 1,
   },
   primaryButtonText: {
     color: '#ffffff',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   secondaryButton: {
     backgroundColor: '#e7eff8',
