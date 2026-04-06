@@ -13,7 +13,7 @@ import {
   View,
 } from 'react-native';
 
-import { ACTION_CARDS, JOKERS } from '../game/data';
+import { ACTION_CARDS, JOKERS, getStartingRouletteJokerPool, pickStartingRouletteJoker } from '../game/data';
 import { getActionCardPreviewImage } from '../game/actionCardPreviewImages';
 import { getDiceModeImage, type DieMode } from '../game/dicePreviewImages';
 import { getJokerPreviewImage } from '../game/jokerPreviewImages';
@@ -221,7 +221,7 @@ export function LobbyScreen({
     }));
   }, []);
 
-  const startJokers = useMemo(() => JOKERS, []);
+  const startJokers = useMemo(() => getStartingRouletteJokerPool(), []);
   const revealedStartJoker = useMemo(
     () => JOKERS.find(joker => joker.id === revealedStartJokerId),
     [revealedStartJokerId],
@@ -243,11 +243,13 @@ export function LobbyScreen({
       return;
     }
 
-    const randomJoker = startJokers[Math.floor(Math.random() * startJokers.length)];
+    const randomJoker = pickStartingRouletteJoker(Math.random, startJokers);
+    if (!randomJoker) {
+      return;
+    }
     const targetIndex = ROULETTE_TARGET_INDEX;
     const generatedRouletteIds = Array.from({ length: 26 }, () => {
-      const randomIndex = Math.floor(Math.random() * startJokers.length);
-      return startJokers[randomIndex].id;
+      return pickStartingRouletteJoker(Math.random, startJokers)?.id ?? randomJoker.id;
     });
     generatedRouletteIds[targetIndex] = randomJoker.id;
 
@@ -573,6 +575,18 @@ export function LobbyScreen({
             ) : (
               <View style={styles.startOverlayPlaceholder} />
             )}
+            {revealedStartJoker ? (
+              <>
+                <Text
+                  style={[
+                    styles.startOverlayName,
+                    { color: revealedStartJokerRarityColors.border },
+                  ]}>
+                  {revealedStartJoker.name}
+                </Text>
+                <Text style={styles.startOverlayDescription}>{revealedStartJoker.description}</Text>
+              </>
+            ) : null}
           </Animated.View>
         </Animated.View>
       ) : null}
@@ -1226,6 +1240,15 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textAlign: 'center',
   },
+  startOverlayDescription: {
+    marginTop: 6,
+    maxWidth: 260,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: 'rgba(255, 255, 255, 0.92)',
+    textAlign: 'center',
+  },
   startOverlaySparkle1: {
     position: 'absolute',
     width: 10,
@@ -1536,8 +1559,9 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   voucherGuideRow: {
-    backgroundColor: '#fff7e8',
+    backgroundColor: '#f5f3ff',
     borderStyle: 'dashed',
+    borderColor: '#c4b5fd',
   },
   handCardGuideThumbWrap: {
     width: 56,
@@ -1549,7 +1573,7 @@ const styles = StyleSheet.create({
   },
   voucherGuideThumbWrap: {
     borderWidth: 2,
-    borderColor: '#f2b84b',
+    borderColor: '#9333ea',
   },
   voucherGuideBadge: {
     position: 'absolute',
@@ -1558,12 +1582,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     paddingVertical: 2,
     borderRadius: 999,
-    backgroundColor: 'rgba(66, 35, 3, 0.82)',
+    backgroundColor: 'rgba(88, 28, 135, 0.88)',
   },
   voucherGuideBadgeText: {
     fontSize: 7,
     fontWeight: '900',
-    color: '#fff5d8',
+    color: '#f5f3ff',
     letterSpacing: 0.4,
   },
   handCardGuideThumb: {
@@ -1628,8 +1652,8 @@ const styles = StyleSheet.create({
   voucherGuideTypeBadge: {
     fontSize: 10,
     fontWeight: '900',
-    color: '#9a5a00',
-    backgroundColor: '#ffe5b3',
+    color: '#5b21b6',
+    backgroundColor: '#ede9fe',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,

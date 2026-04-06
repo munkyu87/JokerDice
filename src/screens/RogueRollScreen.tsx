@@ -29,7 +29,12 @@ import {
   getShopJokerPrice,
 } from '../game/engine';
 import { getActionCardPreviewImage } from '../game/actionCardPreviewImages';
-import { getGrowthJokerDetail } from '../game/data';
+import {
+  JOKERS,
+  getGrowthJokerDetail,
+  getStartingRouletteJokerPool,
+  pickStartingRouletteJoker,
+} from '../game/data';
 import { getJokerPreviewImage } from '../game/jokerPreviewImages';
 import {
   getRewardUtilityPreviewImage,
@@ -205,6 +210,11 @@ const HAND_CARD_WIDTH_COMPACT = 56;
 const HAND_CARD_GAP = 8;
 const HAND_CARD_GAP_COMPACT = 6;
 const DRAG_START_THRESHOLD_PX = 3;
+const RETRY_ROULETTE_CARD_WIDTH = 92;
+const RETRY_ROULETTE_CARD_GAP = 10;
+const RETRY_ROULETTE_VIEWPORT_WIDTH = RETRY_ROULETTE_CARD_WIDTH * 3 + RETRY_ROULETTE_CARD_GAP * 2;
+const RETRY_ROULETTE_STRIDE = RETRY_ROULETTE_CARD_WIDTH + RETRY_ROULETTE_CARD_GAP;
+const RETRY_ROULETTE_TARGET_INDEX = 20;
 
 const getPrimaryTag = (tags: Array<keyof typeof TAG_LABELS> | undefined) =>
   tags?.[0] ?? 'consistency';
@@ -478,11 +488,13 @@ export function RogueRollScreen({
   startingJokerId = 'lucky_reroll',
   initialState,
   onStateChange,
+  onStartingJokerChange,
   onBackToLobby,
 }: {
   startingJokerId?: string;
   initialState?: RogueRollGameState;
   onStateChange?: (state: RogueRollGameState) => void;
+  onStartingJokerChange?: (jokerId: string) => void;
   onBackToLobby?: () => void;
 }) {
   const isDarkMode = useColorScheme() === 'dark';
@@ -499,10 +511,18 @@ export function RogueRollScreen({
   const [rewardTooltipId, setRewardTooltipId] = useState<string | null>(null);
   const [selectedShopItemId, setSelectedShopItemId] = useState<string | null>(null);
   const [shopTooltipId, setShopTooltipId] = useState<string | null>(null);
+  const [selectedShopReplaceJokerIndex, setSelectedShopReplaceJokerIndex] = useState<number | null>(null);
   const [draggingCardIndex, setDraggingCardIndex] = useState<number | null>(null);
   const [draggingJokerIndex, setDraggingJokerIndex] = useState<number | null>(null);
   const [isDraggingOverSellZone, setIsDraggingOverSellZone] = useState(false);
   const [isDraggingOverUseZone, setIsDraggingOverUseZone] = useState(false);
+  const [showRetryReveal, setShowRetryReveal] = useState(false);
+  const [showRetryRouletteResult, setShowRetryRouletteResult] = useState(false);
+  const [isRetryStarting, setIsRetryStarting] = useState(false);
+  const [revealedRetryJokerId, setRevealedRetryJokerId] = useState<string>('lucky_reroll');
+  const [retryRouletteJokerIds, setRetryRouletteJokerIds] = useState<string[]>([]);
+  const [showRetryStartOverlay, setShowRetryStartOverlay] = useState(false);
+  const [isRetryStartingTransition, setIsRetryStartingTransition] = useState(false);
   const {
     state,
     stageDefinition,
@@ -523,6 +543,7 @@ export function RogueRollScreen({
     applyReward,
     buyShopItem,
     replaceShopJoker,
+    cancelShopJokerReplace,
     removeDeckCard,
     continueFromShop,
     continueFromSettlement,
@@ -538,10 +559,16 @@ export function RogueRollScreen({
   );
   const cardSelectAnimationsRef = useRef<Animated.Value[]>([]);
   const cardDragAnimationsRef = useRef<Animated.ValueXY[]>([]);
-  const jokerSelectAnimationsRef = useRef([0, 1, 2, 3, 4].map(() => new Animated.Value(0)));
+  const jokerSelectAnimationsRef = useRef<Animated.Value[]>([]);
   const jokerDragAnimationsRef = useRef<Animated.ValueXY[]>([]);
   const cardTooltipAnimation = useRef(new Animated.Value(0)).current;
   const jokerTooltipAnimation = useRef(new Animated.Value(0)).current;
+  const retryRouletteTranslateX = useState(() => new Animated.Value(0))[0];
+  const retryRouletteShineTranslateX = useRef(new Animated.Value(-60)).current;
+  const retryStartOverlayScale = useRef(new Animated.Value(0.6)).current;
+  const retryStartOverlayOpacity = useRef(new Animated.Value(0)).current;
+  const retryStartOverlayBackdropOpacity = useRef(new Animated.Value(0)).current;
+  const didAutoRetryStartRef = useRef(false);
   const settlementValueAnimationsRef = useRef(
     Array.from({ length: 8 }, () => new Animated.Value(0)),
   );
@@ -598,6 +625,19 @@ export function RogueRollScreen({
   const selectedJokerGrowthDetail = selectedJoker
     ? getGrowthJokerDetail(selectedJoker.id, state.jokerProgress)
     : undefined;
+  const retryStartJoker = useMemo(
+    () => JOKERS.find(joker => joker.id === revealedRetryJokerId),
+    [revealedRetryJokerId],
+  );
+  const retryStartJokerColors = useMemo(
+    () => JOKER_RARITY_COLORS[retryStartJoker?.rarity ?? 'common'],
+    [retryStartJoker?.rarity],
+  );
+  const retryJokerById = useMemo(
+    () =>
+      Object.fromEntries(JOKERS.map(joker => [joker.id, joker])) as Record<string, (typeof JOKERS)[number]>,
+    [],
+  );
   const selectedRewardOption =
     state.phase === 'reward'
       ? state.rewardOptions.find(option => option.id === selectedRewardId) ?? null
@@ -614,6 +654,10 @@ export function RogueRollScreen({
         ) ?? null
       : null;
   const isAwaitingShopJokerReplace = !!pendingShopReplaceItem;
+  const pendingShopReplaceJoker =
+    pendingShopReplaceItem?.type === 'joker' ? getJoker(pendingShopReplaceItem.jokerId) : undefined;
+  const selectedShopReplaceJoker =
+    selectedShopReplaceJokerIndex !== null ? getJoker(state.jokers[selectedShopReplaceJokerIndex]) : undefined;
   const negativeJokerIds = useMemo(
     () => state.negativeJokerIds.filter(jokerId => state.jokers.includes(jokerId)),
     [state.jokers, state.negativeJokerIds],
@@ -641,6 +685,118 @@ export function RogueRollScreen({
     setSelectedCardIndex(null);
     setSelectedJokerIndex(null);
   }, []);
+  const handleRetryRun = useCallback(() => {
+    const retryJokerPool = getStartingRouletteJokerPool();
+    if (isRetryStarting || retryJokerPool.length === 0) {
+      return;
+    }
+
+    const randomJoker = pickStartingRouletteJoker(Math.random, retryJokerPool);
+    if (!randomJoker) {
+      return;
+    }
+    const generatedRouletteIds = Array.from({ length: 26 }, () => {
+      return pickStartingRouletteJoker(Math.random, retryJokerPool)?.id ?? randomJoker.id;
+    });
+    generatedRouletteIds[RETRY_ROULETTE_TARGET_INDEX] = randomJoker.id;
+
+    setRevealedRetryJokerId(randomJoker.id);
+    setShowRetryRouletteResult(false);
+    didAutoRetryStartRef.current = false;
+    setRetryRouletteJokerIds(generatedRouletteIds);
+    setShowRetryReveal(true);
+    setIsRetryStarting(true);
+    retryRouletteTranslateX.setValue(0);
+    const centerOffset = RETRY_ROULETTE_VIEWPORT_WIDTH / 2 - RETRY_ROULETTE_CARD_WIDTH / 2;
+    const targetOffset = -(RETRY_ROULETTE_TARGET_INDEX * RETRY_ROULETTE_STRIDE - centerOffset);
+
+    Animated.sequence([
+      Animated.delay(180),
+      Animated.timing(retryRouletteTranslateX, {
+        toValue: targetOffset,
+        duration: 3200,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.delay(700),
+    ]).start(() => {
+      setShowRetryRouletteResult(true);
+      setIsRetryStarting(false);
+    });
+  }, [isRetryStarting, retryRouletteTranslateX]);
+  const handleConfirmRetryStart = useCallback(() => {
+    if (isRetryStartingTransition || !revealedRetryJokerId) {
+      return;
+    }
+
+    setIsRetryStartingTransition(true);
+    setShowRetryReveal(false);
+    setShowRetryStartOverlay(true);
+
+    retryStartOverlayScale.setValue(0.6);
+    retryStartOverlayOpacity.setValue(0);
+    retryStartOverlayBackdropOpacity.setValue(0);
+
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(retryStartOverlayBackdropOpacity, {
+          toValue: 1,
+          duration: 260,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(retryStartOverlayOpacity, {
+          toValue: 0.2,
+          duration: 260,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.parallel([
+        Animated.spring(retryStartOverlayScale, {
+          toValue: 1.52,
+          speed: 18,
+          bounciness: 10,
+          useNativeDriver: true,
+        }),
+        Animated.timing(retryStartOverlayOpacity, {
+          toValue: 1,
+          duration: 420,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.delay(900),
+    ]).start(() => {
+      Animated.parallel([
+        Animated.timing(retryStartOverlayBackdropOpacity, {
+          toValue: 0,
+          duration: 320,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(retryStartOverlayOpacity, {
+          toValue: 0,
+          duration: 320,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        setShowRetryStartOverlay(false);
+        setIsRetryStartingTransition(false);
+        onStartingJokerChange?.(revealedRetryJokerId);
+        restartRun(revealedRetryJokerId);
+      });
+    });
+  }, [
+    isRetryStartingTransition,
+    onStartingJokerChange,
+    restartRun,
+    revealedRetryJokerId,
+    retryStartOverlayBackdropOpacity,
+    retryStartOverlayOpacity,
+    retryStartOverlayScale,
+  ]);
   const selectedCardTooltipStyle = useMemo(() => {
     if (selectedCardIndex === null) {
       return undefined;
@@ -719,11 +875,75 @@ export function RogueRollScreen({
     if (state.phase !== 'shop') {
       setSelectedShopItemId(null);
       setShopTooltipId(null);
+      setSelectedShopReplaceJokerIndex(null);
       return;
     }
     setSelectedShopItemId(state.shopItems[0]?.id ?? null);
     setShopTooltipId(state.shopItems[0]?.id ?? null);
   }, [state.phase, state.shopItems]);
+
+  useEffect(() => {
+    if (!pendingShopReplaceItem) {
+      setSelectedShopReplaceJokerIndex(null);
+      return;
+    }
+
+    if (
+      selectedShopReplaceJokerIndex !== null &&
+      selectedShopReplaceJokerIndex < state.jokers.length &&
+      state.jokers[selectedShopReplaceJokerIndex]
+    ) {
+      return;
+    }
+
+    setSelectedShopReplaceJokerIndex(0);
+  }, [pendingShopReplaceItem, selectedShopReplaceJokerIndex, state.jokers]);
+
+  useEffect(() => {
+    if (!showRetryReveal) {
+      retryRouletteShineTranslateX.setValue(-60);
+      return;
+    }
+
+    const loop = Animated.loop(
+      Animated.timing(retryRouletteShineTranslateX, {
+        toValue: RETRY_ROULETTE_VIEWPORT_WIDTH + 60,
+        duration: 1400,
+        easing: Easing.inOut(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    );
+
+    loop.start();
+    return () => loop.stop();
+  }, [retryRouletteShineTranslateX, showRetryReveal]);
+
+  useEffect(() => {
+    if (!showRetryReveal || !showRetryRouletteResult) {
+      return;
+    }
+
+    if (showRetryStartOverlay || isRetryStartingTransition) {
+      return;
+    }
+
+    if (didAutoRetryStartRef.current) {
+      return;
+    }
+
+    didAutoRetryStartRef.current = true;
+    const timeout = setTimeout(() => {
+      handleConfirmRetryStart();
+    }, 420);
+
+    return () => clearTimeout(timeout);
+  }, [
+    handleConfirmRetryStart,
+    isRetryStartingTransition,
+    showRetryReveal,
+    showRetryRouletteResult,
+    showRetryStartOverlay,
+  ]);
 
   useEffect(() => {
     if (!showDeckList) {
@@ -751,6 +971,10 @@ export function RogueRollScreen({
 
   while (jokerDragAnimationsRef.current.length < renderedJokerCount) {
     jokerDragAnimationsRef.current.push(new Animated.ValueXY({ x: 0, y: 0 }));
+  }
+
+  while (jokerSelectAnimationsRef.current.length < renderedJokerCount) {
+    jokerSelectAnimationsRef.current.push(new Animated.Value(0));
   }
 
   while (diceAnimationsRef.current.length < state.hand.dice.length) {
@@ -2077,7 +2301,104 @@ export function RogueRollScreen({
           ) : null}
         </OverlayModal>
 
-        <OverlayModal visible={state.phase !== 'playing'} title={overlayTitle} onClose={() => undefined} dismissible={false}>
+        {showRetryStartOverlay ? (
+          <Animated.View
+            style={[styles.retryStartOverlayBackdrop, { opacity: retryStartOverlayBackdropOpacity }]}
+            pointerEvents="none">
+            <Animated.View
+              style={[
+                styles.retryStartOverlayCard,
+                {
+                  opacity: retryStartOverlayOpacity,
+                  transform: [{ scale: retryStartOverlayScale }],
+                },
+              ]}>
+              {getJokerPreviewImage(revealedRetryJokerId) ? (
+                <Image
+                  source={getJokerPreviewImage(revealedRetryJokerId)!}
+                  style={styles.retryStartOverlayImage}
+                  resizeMode="contain"
+                />
+              ) : (
+                <View style={styles.retryStartOverlayPlaceholder} />
+              )}
+              {retryStartJoker ? (
+                <>
+                  <Text
+                    style={[
+                      styles.retryStartOverlayName,
+                      { color: retryStartJokerColors.frame },
+                    ]}>
+                    {retryStartJoker.name}
+                  </Text>
+                  <Text style={styles.retryStartOverlayDescription}>{retryStartJoker.description}</Text>
+                </>
+              ) : null}
+            </Animated.View>
+          </Animated.View>
+        ) : null}
+
+        <Modal animationType="fade" transparent visible={showRetryReveal}>
+          <View style={styles.retryRevealBackdrop}>
+            <View style={styles.retryRevealContent}>
+              <Text style={styles.retryRevealTitle}>🎰 재시작 조커 추첨</Text>
+              <View style={styles.retryRevealRouletteViewport}>
+                <Animated.View
+                  style={[
+                    styles.retryRevealRouletteTrack,
+                    { transform: [{ translateX: retryRouletteTranslateX }] },
+                  ]}>
+                  {retryRouletteJokerIds.map((jokerId, index) => {
+                    const joker = retryJokerById[jokerId];
+                    const jokerImage = getJokerPreviewImage(jokerId);
+                    const rarity = joker?.rarity ?? 'common';
+                    const rarityColors = JOKER_RARITY_COLORS[rarity];
+                    const isSelected = index === RETRY_ROULETTE_TARGET_INDEX;
+
+                    return (
+                      <View
+                        key={`retry-${jokerId}-${index}`}
+                        style={[
+                          styles.retryRevealRouletteCard,
+                          {
+                            borderColor: rarityColors.frame,
+                            backgroundColor: rarityColors.glow,
+                            borderWidth: isSelected ? 3 : 1.5,
+                          },
+                          isSelected ? styles.retryRevealRouletteCardSelected : undefined,
+                        ]}>
+                        {jokerImage ? (
+                          <Image source={jokerImage} style={styles.retryRevealRouletteImage} resizeMode="cover" />
+                        ) : (
+                          <View style={styles.retryRevealRoulettePlaceholder}>
+                            <Text style={styles.retryRevealRoulettePlaceholderText}>
+                              {joker?.name.slice(0, 1) ?? '?'}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+                </Animated.View>
+                <View pointerEvents="none" style={styles.retryRevealPointer} />
+                <View pointerEvents="none" style={styles.retryRevealFocusGlow} />
+                <Animated.View
+                  pointerEvents="none"
+                  style={[
+                    styles.retryRevealShine,
+                    { transform: [{ translateX: retryRouletteShineTranslateX }] },
+                  ]}
+                />
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <OverlayModal
+          visible={state.phase !== 'playing' && !showRetryReveal && !showRetryStartOverlay}
+          title={overlayTitle}
+          onClose={() => undefined}
+          dismissible={false}>
           {state.phase === 'settlement' && state.settlement ? (
             <View style={styles.overlayList}>
               <View style={styles.settlementStageCard}>
@@ -2506,7 +2827,7 @@ export function RogueRollScreen({
                     {pendingShopReplaceItem.title} 구매를 위해 교체할 조커를 선택하세요
                   </Text>
                   <Text style={styles.shopReplaceBody}>
-                    아래 현재 조커 중 하나를 탭하면 즉시 교체되고 구매가 완료됩니다.
+                    아래 현재 조커 중 하나를 먼저 확인한 뒤, 교체 여부를 결정할 수 있습니다.
                   </Text>
                   <View style={styles.shopReplaceRow}>
                     {state.jokers.map((jokerId, slotIndex) => {
@@ -2517,15 +2838,17 @@ export function RogueRollScreen({
                       const ownedPreview = getJokerPreviewImage(jokerId);
                       const ownedRarityTheme = JOKER_RARITY_COLORS[ownedJoker.rarity];
                       const isNegative = negativeJokerIds.includes(jokerId);
+                      const isSelectedReplaceTarget = selectedShopReplaceJokerIndex === slotIndex;
 
                       return (
                         <Pressable
                           key={`shop-replace-${jokerId}-${slotIndex}`}
-                          onPress={() => replaceShopJoker(slotIndex)}
+                          onPress={() => setSelectedShopReplaceJokerIndex(slotIndex)}
                           style={[
                             styles.shopReplaceCard,
                             { borderColor: ownedRarityTheme.frame },
                             isNegative ? styles.shopReplaceCardNegative : undefined,
+                            isSelectedReplaceTarget ? styles.shopReplaceCardSelected : undefined,
                           ]}>
                           {ownedPreview ? (
                             <View style={styles.shopReplaceCardArtFrame}>
@@ -2549,6 +2872,116 @@ export function RogueRollScreen({
                         </Pressable>
                       );
                     })}
+                  </View>
+                  {selectedShopReplaceJoker && pendingShopReplaceJoker ? (
+                    <View style={styles.shopReplaceConfirmCard}>
+                      <Text style={styles.shopReplaceConfirmTitle}>교체 비교</Text>
+                      <View style={styles.shopReplaceCompareRow}>
+                        {[
+                          {
+                            label: '기존 조커',
+                            joker: selectedShopReplaceJoker,
+                            preview: getJokerPreviewImage(selectedShopReplaceJoker.id),
+                            rarityTheme: JOKER_RARITY_COLORS[selectedShopReplaceJoker.rarity],
+                            theme: getJokerTheme(selectedShopReplaceJoker.tags),
+                            extraBadge: negativeJokerIds.includes(selectedShopReplaceJoker.id) ? 'NEG' : undefined,
+                          },
+                          {
+                            label: '새 조커',
+                            joker: pendingShopReplaceJoker,
+                            preview: getJokerPreviewImage(pendingShopReplaceJoker.id),
+                            rarityTheme: JOKER_RARITY_COLORS[pendingShopReplaceJoker.rarity],
+                            theme: getJokerTheme(pendingShopReplaceJoker.tags),
+                            extraBadge: undefined,
+                          },
+                        ].map(entry => (
+                          <View
+                            key={`${entry.label}-${entry.joker.id}`}
+                            style={[
+                              styles.shopReplaceCompareCard,
+                              { borderColor: entry.rarityTheme.frame, backgroundColor: entry.theme.surface },
+                            ]}>
+                            <Text style={styles.shopReplaceCompareLabel}>{entry.label}</Text>
+                            {entry.preview ? (
+                              <View style={styles.shopReplaceCompareArtFrame}>
+                                <Image source={entry.preview} style={styles.shopReplaceCompareImage} resizeMode="cover" />
+                              </View>
+                            ) : (
+                              <View style={styles.shopReplaceCompareFallback}>
+                                <Text style={styles.shopReplaceCompareFallbackText}>{entry.joker.name.slice(0, 1)}</Text>
+                              </View>
+                            )}
+                            <Text style={styles.shopReplaceCompareName}>{entry.joker.name}</Text>
+                            <View style={styles.shopReplaceCompareMetaRow}>
+                              <Text
+                                style={[
+                                  styles.shopReplaceComparePill,
+                                  {
+                                    color: entry.rarityTheme.frame,
+                                    borderColor: entry.rarityTheme.frame,
+                                    backgroundColor: entry.rarityTheme.glow,
+                                  },
+                                ]}>
+                                {JOKER_RARITY_LABELS[entry.joker.rarity]}
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.shopReplaceComparePill,
+                                  {
+                                    color: entry.theme.accent,
+                                    borderColor: entry.theme.frame,
+                                    backgroundColor: entry.theme.badge,
+                                  },
+                                ]}>
+                                {JOKER_TRIGGER_LABELS[entry.joker.trigger]}
+                              </Text>
+                              {entry.extraBadge ? (
+                                <Text style={[styles.shopReplaceComparePill, styles.shopReplaceCompareNegPill]}>
+                                  {entry.extraBadge}
+                                </Text>
+                              ) : null}
+                            </View>
+                            <View style={styles.shopReplaceCompareTagRow}>
+                              {entry.joker.tags.map(tag => (
+                                <Text
+                                  key={`${entry.joker.id}-${tag}`}
+                                  style={[
+                                    styles.shopReplaceComparePill,
+                                    {
+                                      color: entry.theme.accent,
+                                      borderColor: entry.theme.frame,
+                                      backgroundColor: entry.theme.badge,
+                                    },
+                                  ]}>
+                                  {TAG_LABELS[tag]}
+                                </Text>
+                              ))}
+                            </View>
+                            <Text style={styles.shopReplaceCompareDesc}>{entry.joker.description}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    </View>
+                  ) : null}
+                  <View style={styles.shopReplaceActionRow}>
+                    <Pressable
+                      onPress={cancelShopJokerReplace}
+                      style={[styles.primaryButton, styles.secondaryButton]}>
+                      <Text style={[styles.primaryButtonText, styles.secondaryButtonText]}>취소</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        if (selectedShopReplaceJokerIndex !== null) {
+                          replaceShopJoker(selectedShopReplaceJokerIndex);
+                        }
+                      }}
+                      disabled={selectedShopReplaceJokerIndex === null}
+                      style={[
+                        styles.primaryButton,
+                        selectedShopReplaceJokerIndex === null ? styles.largePrimaryButtonDisabled : undefined,
+                      ]}>
+                      <Text style={styles.primaryButtonText}>이 조커로 교체</Text>
+                    </Pressable>
                   </View>
                 </View>
               ) : null}
@@ -2624,7 +3057,7 @@ export function RogueRollScreen({
               title="Run Failed"
               description="이번 빌드는 목표 점수에 도달하지 못했습니다. 조커 순서와 덱 압축을 다시 시험해보세요."
               actionLabel="다시 도전"
-              onPress={restartRun}
+              onPress={handleRetryRun}
             />
           ) : null}
         </OverlayModal>
@@ -3679,7 +4112,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 999,
-    backgroundColor: 'rgba(66, 35, 3, 0.84)',
+    backgroundColor: 'rgba(88, 28, 135, 0.88)',
     zIndex: 2,
   },
   handCardMiniBadgeOnImage: {
@@ -3702,13 +4135,14 @@ const styles = StyleSheet.create({
   voucherCardShell: {
     borderStyle: 'dashed',
     borderWidth: 2,
-    shadowColor: '#f0b94b',
+    borderColor: '#9333ea',
+    shadowColor: '#7c3aed',
   },
   voucherCardFrameGlow: {
     ...StyleSheet.absoluteFillObject,
     borderRadius: 14,
     borderWidth: 2,
-    borderColor: 'rgba(240, 185, 75, 0.72)',
+    borderColor: 'rgba(147, 51, 234, 0.75)',
   },
   voucherBadgeInline: {
     position: 'absolute',
@@ -3719,14 +4153,14 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(66, 35, 3, 0.84)',
+    backgroundColor: 'rgba(88, 28, 135, 0.88)',
     zIndex: 2,
     paddingHorizontal: 4,
   },
   voucherBadgeText: {
     fontSize: 7,
     fontWeight: '900',
-    color: '#fff5d8',
+    color: '#f5f3ff',
     letterSpacing: 0.4,
   },
   bottomBar: {
@@ -4200,8 +4634,8 @@ const styles = StyleSheet.create({
   },
   voucherCardFace: {
     borderWidth: 2,
-    borderColor: '#f0b94b',
-    backgroundColor: '#fff8e8',
+    borderColor: '#9333ea',
+    backgroundColor: '#f5f3ff',
   },
   rewardCardPlaceholderText: {
     fontSize: 26,
@@ -4293,6 +4727,14 @@ const styles = StyleSheet.create({
   shopReplaceCardNegative: {
     backgroundColor: '#f4f0ff',
   },
+  shopReplaceCardSelected: {
+    backgroundColor: '#e6f0ff',
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+    transform: [{ translateY: -1 }],
+  },
   shopReplaceCardArtFrame: {
     width: '100%',
     aspectRatio: HAND_CARD_ASPECT_RATIO,
@@ -4328,6 +4770,104 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '800',
     color: '#6f46d9',
+  },
+  shopReplaceConfirmCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#bfdcf3',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    gap: 4,
+  },
+  shopReplaceConfirmTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#173450',
+  },
+  shopReplaceConfirmBody: {
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#4c6f8d',
+  },
+  shopReplaceCompareRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  shopReplaceCompareCard: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    padding: 8,
+    gap: 6,
+  },
+  shopReplaceCompareLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#4c6f8d',
+  },
+  shopReplaceCompareArtFrame: {
+    width: '100%',
+    aspectRatio: HAND_CARD_ASPECT_RATIO,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.45)',
+  },
+  shopReplaceCompareImage: {
+    width: '100%',
+    height: '100%',
+  },
+  shopReplaceCompareFallback: {
+    width: '100%',
+    aspectRatio: HAND_CARD_ASPECT_RATIO,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.45)',
+  },
+  shopReplaceCompareFallbackText: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: '#173450',
+  },
+  shopReplaceCompareName: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#173450',
+  },
+  shopReplaceCompareMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  shopReplaceCompareTagRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  shopReplaceComparePill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    fontSize: 9,
+    fontWeight: '900',
+    overflow: 'hidden',
+  },
+  shopReplaceCompareNegPill: {
+    color: '#6f46d9',
+    borderColor: '#a78bfa',
+    backgroundColor: '#f3e8ff',
+  },
+  shopReplaceCompareDesc: {
+    fontSize: 11,
+    lineHeight: 15,
+    color: '#4c6f8d',
+  },
+  shopReplaceActionRow: {
+    flexDirection: 'row',
+    gap: 8,
   },
   overlayButton: {
     borderRadius: 16,
@@ -4382,10 +4922,173 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     alignItems: 'center',
+    flex: 1,
   },
   primaryButtonText: {
     color: '#ffffff',
     fontSize: 14,
     fontWeight: '700',
+  },
+  secondaryButton: {
+    backgroundColor: '#e7eff8',
+  },
+  secondaryButtonText: {
+    color: '#355674',
+  },
+  retryStartOverlayBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 60,
+  },
+  retryStartOverlayCard: {
+    width: 240,
+    paddingVertical: 0,
+    borderRadius: 26,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'visible',
+    zIndex: 2,
+  },
+  retryStartOverlayImage: {
+    width: 240,
+    height: 240,
+  },
+  retryStartOverlayPlaceholder: {
+    width: 210,
+    height: 210,
+    borderRadius: 22,
+    backgroundColor: 'rgba(216,232,246,0.9)',
+  },
+  retryStartOverlayName: {
+    marginTop: 10,
+    fontSize: 18,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  retryStartOverlayDescription: {
+    marginTop: 6,
+    maxWidth: 260,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: 'rgba(255, 255, 255, 0.92)',
+    textAlign: 'center',
+  },
+  retryRevealBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(2, 6, 14, 0.76)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  retryRevealContent: {
+    width: '82%',
+    maxWidth: 320,
+    borderRadius: 16,
+    backgroundColor: '#eef6ff',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.08)',
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+    alignItems: 'center',
+  },
+  retryRevealTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#173450',
+  },
+  retryRevealRouletteViewport: {
+    marginTop: 14,
+    width: RETRY_ROULETTE_VIEWPORT_WIDTH,
+    height: 160,
+    borderWidth: 1,
+    borderColor: '#b7d3ea',
+    backgroundColor: '#ffffff',
+    overflow: 'hidden',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
+  retryRevealRouletteTrack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: '100%',
+    paddingHorizontal: 0,
+  },
+  retryRevealRouletteCard: {
+    width: RETRY_ROULETTE_CARD_WIDTH,
+    height: 124,
+    marginRight: RETRY_ROULETTE_CARD_GAP,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#8fbce0',
+    backgroundColor: '#ffffff',
+    overflow: 'hidden',
+  },
+  retryRevealRouletteCardSelected: {
+    shadowColor: '#3bbcff',
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  retryRevealRouletteImage: {
+    width: '100%',
+    height: '100%',
+  },
+  retryRevealRoulettePlaceholder: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#dbe8f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  retryRevealRoulettePlaceholderText: {
+    fontSize: 40,
+    fontWeight: '800',
+    color: '#3f5f7a',
+  },
+  retryRevealPointer: {
+    position: 'absolute',
+    top: 2,
+    left: '50%',
+    marginLeft: -9,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 9,
+    borderRightWidth: 9,
+    borderTopWidth: 14,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: '#1f4f78',
+  },
+  retryRevealFocusGlow: {
+    position: 'absolute',
+    left: '50%',
+    marginLeft: -46,
+    top: 17,
+    width: 93,
+    height: 124,
+    borderRadius: 14,
+    borderWidth: 3,
+    borderColor: '#3bbcff',
+    backgroundColor: 'rgba(59,188,255,0.08)',
+  },
+  retryRevealShine: {
+    position: 'absolute',
+    top: -20,
+    width: 44,
+    height: 220,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    transform: [{ rotate: '18deg' }],
   },
 });

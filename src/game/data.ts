@@ -4,6 +4,7 @@ import {
   BossScoreContext,
   JokerDefinition,
   JokerProgressMap,
+  JokerRarity,
   StageDefinition,
 } from './types';
 
@@ -92,6 +93,29 @@ export const ACTION_CARDS: ActionCardDefinition[] = [
         ok: true,
         dice: nextDice as typeof dice,
         message: '선택한 주사위를 1 내렸습니다.',
+      };
+    },
+  },
+  {
+    id: 'lift_selected',
+    name: 'Lift Selected',
+    description: '선택한 주사위마다 +1 올립니다. 최대값은 6입니다.',
+    rarity: 'uncommon',
+    tags: ['high', 'consistency'],
+    apply: ({ dice, selectedDice }) => {
+      if (selectedDice.length === 0) {
+        return { ok: false, message: 'Lift Selected는 최소 1개의 주사위를 선택해야 합니다.' };
+      }
+
+      const nextDice = [...dice];
+      selectedDice.forEach(index => {
+        nextDice[index] = Math.min(6, nextDice[index] + 1) as (typeof nextDice)[number];
+      });
+
+      return {
+        ok: true,
+        dice: nextDice as typeof dice,
+        message: '선택한 주사위를 전부 1씩 올렸습니다.',
       };
     },
   },
@@ -379,9 +403,11 @@ export const ACTION_CARDS: ActionCardDefinition[] = [
     id: 'negative_ink',
     name: 'Negative Ink',
     description:
-      '보유한 조커 중 네거티브가 아닌 조커 1장을 무작위로 네거티브로 만듭니다. 네거티브 조커는 슬롯을 차지하지 않습니다.',
+      '보유한 조커 중 네거티브가 아닌 조커 1장을 무작위로 네거티브로 만듭니다. 네거티브 조커는 슬롯을 차지하지 않으며, 사용하면 완전히 사라집니다.',
     rarity: 'legendary',
     tags: ['economy'],
+    pool: 'voucher',
+    consumable: true,
     apply: ({ dice, jokerIds, negativeJokerIds, rng }) => {
       const candidates = jokerIds.filter(jokerId => !negativeJokerIds.includes(jokerId));
       if (candidates.length === 0) {
@@ -583,26 +609,58 @@ export const ACTION_CARDS: ActionCardDefinition[] = [
   },
 ];
 
+/** 배수 누적 성장 조커: 저장값이 Hand 배수에 더해지는 양, 성장 1스텝당 +0.1 */
+export const MULTIPLIER_GROWTH_STEP = 0.1;
+
+const MULTIPLIER_GROWTH_JOKER_IDS: readonly string[] = [
+  'twin_engine',
+  'reroll_ledger',
+  'golden_habit',
+  'glass_joker',
+];
+
+export const isMultiplierGrowthJoker = (jokerId: string) =>
+  MULTIPLIER_GROWTH_JOKER_IDS.includes(jokerId);
+
+const roundMultiplierGrowthValue = (n: number) => Math.round(n * 10) / 10;
+
+export const stepMultiplierGrowthProgress = (current: number, steps: number) =>
+  roundMultiplierGrowthValue(current + steps * MULTIPLIER_GROWTH_STEP);
+
+export const formatMultiplierGrowthForDisplay = (n: number) =>
+  roundMultiplierGrowthValue(n).toFixed(1);
+
 const GROWTH_JOKER_BASE_VALUES: Partial<Record<string, number>> = {
   pair_savings: 6,
-  twin_engine: 1,
+  twin_engine: MULTIPLIER_GROWTH_STEP,
   house_keeper: 12,
   straight_scholar: 15,
   six_cult: 6,
   card_sharp: 2,
   burn_count: 4,
-  reroll_ledger: 1,
+  reroll_ledger: MULTIPLIER_GROWTH_STEP,
   perfect_grip: 10,
   piggy_bank: 6,
-  golden_habit: 1,
+  golden_habit: MULTIPLIER_GROWTH_STEP,
   frugal_mask: 8,
   all_in: 12,
-  glass_joker: 1,
+  glass_joker: MULTIPLIER_GROWTH_STEP,
   last_chance: 16,
 };
 
-export const getGrowthJokerValue = (jokerId: string, progress: JokerProgressMap = {}) =>
-  progress[jokerId] ?? GROWTH_JOKER_BASE_VALUES[jokerId] ?? 0;
+export const getGrowthJokerValue = (jokerId: string, progress: JokerProgressMap = {}) => {
+  const base = GROWTH_JOKER_BASE_VALUES[jokerId] ?? 0;
+  let raw = progress[jokerId] ?? base;
+
+  if (isMultiplierGrowthJoker(jokerId)) {
+    if (Number.isFinite(raw) && Number.isInteger(raw) && raw >= 1) {
+      raw = raw * MULTIPLIER_GROWTH_STEP;
+    }
+    raw = roundMultiplierGrowthValue(raw);
+  }
+
+  return raw;
+};
 
 export const getGrowthJokerSummary = (jokerId: string, progress: JokerProgressMap = {}) => {
   const value = getGrowthJokerValue(jokerId, progress);
@@ -612,19 +670,19 @@ export const getGrowthJokerSummary = (jokerId: string, progress: JokerProgressMa
 
   const byId: Record<string, string> = {
     pair_savings: `현재 Pair 보너스 +${value}`,
-    twin_engine: `현재 Two Pair 배수 +${value}`,
+    twin_engine: `현재 Two Pair 배수 +${formatMultiplierGrowthForDisplay(value)}`,
     house_keeper: `현재 Full House 보너스 +${value}`,
     straight_scholar: `현재 Straight 보너스 +${value}`,
     six_cult: `현재 6 포함 보너스 +${value}`,
     card_sharp: `현재 누적 기본 점수 +${value}`,
     burn_count: `현재 카드 1장당 보너스 +${value}`,
-    reroll_ledger: `현재 리롤 Hand 배수 +${value}`,
+    reroll_ledger: `현재 리롤 Hand 배수 +${formatMultiplierGrowthForDisplay(value)}`,
     perfect_grip: `현재 클린 Hand 보너스 +${value}`,
     piggy_bank: `현재 누적 기본 점수 +${value}`,
-    golden_habit: `현재 누적 배수 +${value}`,
+    golden_habit: `현재 누적 배수 +${formatMultiplierGrowthForDisplay(value)}`,
     frugal_mask: `현재 누적 기본 점수 +${value}`,
     all_in: `현재 누적 기본 점수 +${value}`,
-    glass_joker: `현재 누적 배수 +${value}`,
+    glass_joker: `현재 누적 배수 +${formatMultiplierGrowthForDisplay(value)}`,
     last_chance: `현재 막판 Hand 보너스 +${value}`,
   };
 
@@ -639,19 +697,19 @@ export const getGrowthJokerDetail = (jokerId: string, progress: JokerProgressMap
 
   const growthRuleById: Record<string, string> = {
     pair_savings: '성장: Pair 성공 시 +3',
-    twin_engine: '성장: Two Pair 성공 시 +1',
+    twin_engine: '성장: Two Pair 성공 시 +0.1',
     house_keeper: '성장: Full House 성공 시 +10',
     straight_scholar: '성장: Straight 성공 시 +15',
     six_cult: '성장: 점수 주사위에 6 포함 시 +4',
     card_sharp: '성장: 핸드 카드 사용 시 +2',
     burn_count: '성장: 카드 2장 이상 사용한 Hand 종료 시 +1',
-    reroll_ledger: '성장: 리롤 사용 시 +1',
+    reroll_ledger: '성장: 리롤 사용 시 +0.1',
     perfect_grip: '성장: 리롤/카드 없이 제출 시 +6',
     piggy_bank: '성장: 정산 이자 획득 시 +5',
-    golden_habit: '성장: 상점 구매 시 +1',
+    golden_habit: '성장: 상점 구매 시 +0.1',
     frugal_mask: '성장: 상점 구매 없이 넘기면 +6',
     all_in: '성장: 목표보다 100점 초과할 때마다 +4',
-    glass_joker: '성장: Hand 점수 60 이상이면 +2, 실패 시 1로 초기화',
+    glass_joker: '성장: Hand 점수 60 이상이면 +0.2, 실패 시 0.1로 초기화',
     last_chance: '성장: 남은 Hand 1 이하로 클리어 시 +12',
   };
 
@@ -659,6 +717,39 @@ export const getGrowthJokerDetail = (jokerId: string, progress: JokerProgressMap
     current,
     growthRule: growthRuleById[jokerId],
   };
+};
+
+const STARTING_ROULETTE_RARITY_WEIGHT: Record<Exclude<JokerRarity, 'legendary'>, number> = {
+  common: 60,
+  uncommon: 28,
+  rare: 12,
+};
+
+export const getStartingRouletteJokerPool = (): JokerDefinition[] =>
+  JOKERS.filter(joker => joker.rarity !== 'legendary');
+
+export const pickStartingRouletteJoker = (
+  rng: () => number = Math.random,
+  pool: JokerDefinition[] = getStartingRouletteJokerPool(),
+): JokerDefinition | undefined => {
+  if (pool.length === 0) {
+    return undefined;
+  }
+
+  const totalWeight = pool.reduce(
+    (sum, joker) => sum + STARTING_ROULETTE_RARITY_WEIGHT[joker.rarity as Exclude<JokerRarity, 'legendary'>],
+    0,
+  );
+
+  let roll = rng() * totalWeight;
+  for (const joker of pool) {
+    roll -= STARTING_ROULETTE_RARITY_WEIGHT[joker.rarity as Exclude<JokerRarity, 'legendary'>];
+    if (roll <= 0) {
+      return joker;
+    }
+  }
+
+  return pool[pool.length - 1];
 };
 
 export const JOKERS: JokerDefinition[] = [
@@ -685,7 +776,7 @@ export const JOKERS: JokerDefinition[] = [
   {
     id: 'twin_engine',
     name: 'Twin Engine',
-    description: 'Two Pair면 현재 누적 수치만큼 배수를 얻고, Two Pair를 만들 때마다 +1 성장합니다.',
+    description: 'Two Pair면 현재 누적 수치만큼 배수를 얻고, Two Pair를 만들 때마다 +0.1 성장합니다.',
     rarity: 'rare',
     tags: ['set'],
     trigger: 'beforeScore',
@@ -698,7 +789,10 @@ export const JOKERS: JokerDefinition[] = [
       return {
         ...ctx,
         multiplier: ctx.multiplier + bonus,
-        notes: [...ctx.notes, `Twin Engine: Two Pair로 배수 +${bonus}`],
+        notes: [
+          ...ctx.notes,
+          `Twin Engine: Two Pair로 배수 +${formatMultiplierGrowthForDisplay(bonus)}`,
+        ],
       };
     },
   },
@@ -803,7 +897,7 @@ export const JOKERS: JokerDefinition[] = [
   {
     id: 'reroll_ledger',
     name: 'Reroll Ledger',
-    description: '리롤을 한 Hand면 현재 누적 수치만큼 배수를 얻고, 리롤할 때마다 +1 성장합니다.',
+    description: '리롤을 한 Hand면 현재 누적 수치만큼 배수를 얻고, 리롤할 때마다 +0.1 성장합니다.',
     rarity: 'uncommon',
     tags: ['consistency'],
     trigger: 'beforeScore',
@@ -816,7 +910,10 @@ export const JOKERS: JokerDefinition[] = [
       return {
         ...ctx,
         multiplier: ctx.multiplier + bonus,
-        notes: [...ctx.notes, `Reroll Ledger: 리롤 Hand로 배수 +${bonus}`],
+        notes: [
+          ...ctx.notes,
+          `Reroll Ledger: 리롤 Hand로 배수 +${formatMultiplierGrowthForDisplay(bonus)}`,
+        ],
       };
     },
   },
@@ -859,7 +956,7 @@ export const JOKERS: JokerDefinition[] = [
   {
     id: 'golden_habit',
     name: 'Golden Habit',
-    description: '현재 누적 수치만큼 배수를 얻고, 상점에서 구매할 때마다 +1 성장합니다.',
+    description: '현재 누적 수치만큼 배수를 얻고, 상점에서 구매할 때마다 +0.1 성장합니다.',
     rarity: 'rare',
     tags: ['economy'],
     trigger: 'beforeScore',
@@ -868,7 +965,7 @@ export const JOKERS: JokerDefinition[] = [
       return {
         ...ctx,
         multiplier: ctx.multiplier + bonus,
-        notes: [...ctx.notes, `Golden Habit: 누적 배수 +${bonus}`],
+        notes: [...ctx.notes, `Golden Habit: 누적 배수 +${formatMultiplierGrowthForDisplay(bonus)}`],
       };
     },
   },
@@ -907,7 +1004,8 @@ export const JOKERS: JokerDefinition[] = [
   {
     id: 'glass_joker',
     name: 'Glass Joker',
-    description: '현재 누적 수치만큼 배수를 얻습니다. Hand 점수 60 이상이면 +2 성장하지만, 실패하면 기본값으로 초기화됩니다.',
+    description:
+      '현재 누적 수치만큼 배수를 얻습니다. Hand 점수 60 이상이면 +0.2 성장하지만, 실패하면 0.1로 초기화됩니다.',
     rarity: 'legendary',
     tags: ['high'],
     trigger: 'beforeScore',
@@ -916,7 +1014,7 @@ export const JOKERS: JokerDefinition[] = [
       return {
         ...ctx,
         multiplier: ctx.multiplier + bonus,
-        notes: [...ctx.notes, `Glass Joker: 누적 배수 +${bonus}`],
+        notes: [...ctx.notes, `Glass Joker: 누적 배수 +${formatMultiplierGrowthForDisplay(bonus)}`],
       };
     },
   },

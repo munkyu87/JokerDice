@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { BOSSES, STAGES, getGrowthJokerValue } from './data';
+import {
+  BOSSES,
+  MULTIPLIER_GROWTH_STEP,
+  STAGES,
+  getGrowthJokerValue,
+  stepMultiplierGrowthProgress,
+} from './data';
 import {
   createRewardOptions,
   createShopItems,
@@ -181,7 +187,9 @@ const applyEndOfHandGrowth = ({
     nextProgress = updateJokerProgressValue(nextProgress, 'pair_savings', current => current + 3);
   }
   if (activeJokerIds.has('twin_engine') && scoring.handRank === 'two_pair') {
-    nextProgress = updateJokerProgressValue(nextProgress, 'twin_engine', current => current + 1);
+    nextProgress = updateJokerProgressValue(nextProgress, 'twin_engine', current =>
+      stepMultiplierGrowthProgress(current, 1),
+    );
   }
   if (activeJokerIds.has('house_keeper') && scoring.handRank === 'full_house') {
     nextProgress = updateJokerProgressValue(nextProgress, 'house_keeper', current => current + 10);
@@ -214,7 +222,7 @@ const applyEndOfHandGrowth = ({
   }
   if (activeJokerIds.has('glass_joker')) {
     nextProgress = updateJokerProgressValue(nextProgress, 'glass_joker', current =>
-      scoring.finalScore >= 60 ? current + 2 : 1,
+      scoring.finalScore >= 60 ? stepMultiplierGrowthProgress(current, 2) : MULTIPLIER_GROWTH_STEP,
     );
   }
   if (
@@ -247,7 +255,9 @@ const applyShopPurchaseGrowth = (currentState: GameState) => {
     return currentState.jokerProgress;
   }
 
-  return updateJokerProgressValue(currentState.jokerProgress, 'golden_habit', current => current + 1);
+  return updateJokerProgressValue(currentState.jokerProgress, 'golden_habit', current =>
+    stepMultiplierGrowthProgress(current, 1),
+  );
 };
 
 const applySkipShopGrowth = (currentState: GameState) => {
@@ -497,7 +507,9 @@ export const useRogueRollGame = (
         getEffectiveBossId(currentState),
       ).activeJokerIds;
       const nextJokerProgress = activeJokerIds.includes('reroll_ledger')
-        ? updateJokerProgressValue(currentState.jokerProgress, 'reroll_ledger', current => current + 1)
+        ? updateJokerProgressValue(currentState.jokerProgress, 'reroll_ledger', current =>
+            stepMultiplierGrowthProgress(current, 1),
+          )
         : currentState.jokerProgress;
       const rerollGold = activeJokerIds.includes('loose_change') ? 1 : 0;
 
@@ -1112,6 +1124,20 @@ export const useRogueRollGame = (
     });
   };
 
+  const cancelShopJokerReplace = () => {
+    setState(currentState => {
+      if (currentState.phase !== 'shop' || !currentState.shopReplaceItemId) {
+        return currentState;
+      }
+
+      return {
+        ...currentState,
+        shopReplaceItemId: undefined,
+        message: '조커 교체를 취소했습니다.',
+      };
+    });
+  };
+
   const removeDeckCard = (option: PurgeOption) => {
     if (state.phase !== 'purge') {
       return;
@@ -1200,8 +1226,8 @@ export const useRogueRollGame = (
     });
   };
 
-  const restartRun = () => {
-    setState(createInitialGameState(startingJokerId));
+  const restartRun = (nextStartingJokerId?: string) => {
+    setState(createInitialGameState(nextStartingJokerId ?? startingJokerId));
   };
 
   const sellHandCard = (handIndex: number) => {
@@ -1368,6 +1394,7 @@ export const useRogueRollGame = (
     applyReward,
     buyShopItem,
     replaceShopJoker,
+    cancelShopJokerReplace,
     removeDeckCard,
     continueFromShop,
     continueFromSettlement,

@@ -119,6 +119,7 @@ function App() {
           startingJokerId={startingJokerId}
           initialState={pendingInitialState}
           onStateChange={handleGameStateChange}
+          onStartingJokerChange={setStartingJokerId}
           onBackToLobby={() => {
             setScreen('lobby');
           }}

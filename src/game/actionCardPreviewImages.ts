@@ -8,6 +8,7 @@ const ACTION_CARD_PREVIEW_IMAGES: Partial<Record<string, ImageSourcePropType>> =
   sink_all: require('../assets/cards/action-sink-all.png'),
   nudge_up: require('../assets/cards/action-nudge-up.png'),
   nudge_down: require('../assets/cards/action-nudge-down.png'),
+  lift_selected: require('../assets/cards/action-lift-selected.png'),
   anchor_one: require('../assets/cards/action-anchor-one.png'),
   smallest_bump: require('../assets/cards/action-smallest-bump.png'),
   mirror_high: require('../assets/cards/action-mirror-high.png'),
@@ -26,6 +27,13 @@ const ACTION_CARD_PREVIEW_IMAGES: Partial<Record<string, ImageSourcePropType>> =
   private_dealer: require('../assets/cards/action-private-dealer.png'),
   grand_raise: require('../assets/cards/action-grand-raise.png'),
   apex_unify: require('../assets/cards/action-apex-unify.png'),
+  royal_expense: require('../assets/cards/action-royal-expense.png'),
+  coin_flip: require('../assets/cards/action-coin-flip.png'),
+  paid_favor: require('../assets/cards/action-paid-favor.png'),
+  reserve_draw: require('../assets/cards/action-reserve-draw.png'),
+  negative_stamp: require('../assets/cards/action-negative-stamp.png'),
+  interest_ledger: require('../assets/cards/action-interest-ledger.png'),
+  boss_waiver: require('../assets/cards/action-boss-waiver.png'),
 };
 
 export const getActionCardPreviewImage = (cardId: string): ImageSourcePropType | undefined =>
