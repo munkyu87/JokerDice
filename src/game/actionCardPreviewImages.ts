@@ -22,6 +22,8 @@ const ACTION_CARD_PREVIEW_IMAGES: Partial<Record<string, ImageSourcePropType>> =
   boost_spike: require('../assets/cards/action-boost-spike.png'),
   median_three: require('../assets/cards/action-median-three.png'),
   negative_ink: require('../assets/cards/action-negative-ink.png'),
+  gold_burn: require('../assets/cards/action-gold-burn.png'),
+  private_dealer: require('../assets/cards/action-private-dealer.png'),
   grand_raise: require('../assets/cards/action-grand-raise.png'),
   apex_unify: require('../assets/cards/action-apex-unify.png'),
 };
